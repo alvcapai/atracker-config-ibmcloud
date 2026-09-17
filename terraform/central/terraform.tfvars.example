@@ -1,0 +1,22 @@
+##############################################################################
+# central/ — example variable values (copy to terraform.tfvars and fill in)
+##############################################################################
+
+# IBM Cloud region where the central IBM Cloud Logs instance lives
+ibmcloud_region = "us-south"
+
+# Display name of your IBM Cloud Enterprise
+# Find it via: ibmcloud enterprise show
+enterprise_name = "My Enterprise"
+
+# GUID of the IBM Cloud Logs instance in the centralized Logging Account
+# Find it via: ibmcloud resource service-instance <name> --output json | jq '.[0].guid'
+central_logs_instance_id = "REPLACE_WITH_CENTRAL_LOGS_INSTANCE_GUID"
+
+# Account IDs to exclude from auto-discovery — always include the management
+# account and the central Logging Account itself so they are not authorised
+# against their own instance.
+excluded_account_ids = [
+  "REPLACE_WITH_MANAGEMENT_ACCOUNT_ID",
+  "REPLACE_WITH_CENTRAL_LOGGING_ACCOUNT_ID",
+]

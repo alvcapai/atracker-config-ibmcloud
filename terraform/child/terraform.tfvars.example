@@ -1,0 +1,19 @@
+##############################################################################
+# child/ — example variable values (copy to terraform.tfvars and fill in)
+##############################################################################
+
+# IBM Cloud region for the provider — should match the child account region
+ibmcloud_region = "us-south"
+
+# Full CRN of the IBM Cloud Logs instance in the centralized Logging Account
+# crn:v1:bluemix:public:logs:<region>:a/<central-account-id>:<instance-guid>::
+central_logs_crn = "REPLACE_WITH_CENTRAL_LOGS_CRN"
+
+# Primary metadata region for Logs Routing V3
+logs_router_metadata_region = "us-south"
+
+# Region for the Activity Tracker target resource
+atracker_target_region = "us-south"
+
+# Short prefix that identifies this child account in resource names
+name_prefix = "prod-us-south"
