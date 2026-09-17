@@ -2,11 +2,26 @@
 # Central Logging Account — cross-account S2S authorizations
 #
 # Run this workspace FIRST so every child account has the required
-# logs-router → IBM Cloud Logs and atracker → IBM Cloud Logs Sender
-# authorization before child routes are applied.
+# logs-router → IBM Cloud Logs and atracker → IBM Cloud Logs "Sender"
+# authorization before the child routes are applied.
 #
-# Child accounts are discovered automatically from the IBM Cloud Enterprise
-# via data sources — no manual account ID list is required.
+# What it does
+#   1. Lists every account of the IBM Cloud Enterprise (Enterprise Management
+#      ListAccounts API) — or uses the explicit list in var.child_account_ids
+#      when the workspace identity has no enterprise access.
+#   2. Filters that list: drops the enterprise management account, the central
+#      logging account itself, anything in var.excluded_account_ids and any
+#      account whose state is not in var.included_account_states.
+#   3. Creates one IAM authorization policy per (child account × source
+#      service) pair, all targeting the central IBM Cloud Logs instance.
+#   4. Reports the full decision table through outputs, so the plan itself is
+#      the inventory of "authorizations needed vs. authorizations created".
+#
+# Where each authorization lives
+#   Cross-account service-to-service authorizations are created in the account
+#   that owns the TARGET resource — i.e. this workspace must run in the account
+#   that holds the central IBM Cloud Logs instance. See:
+#   https://cloud.ibm.com/docs/logs-router?topic=logs-router-enterprise-routing-scenario
 #
 # Schematics notes:
 #   - No backend block: Schematics manages state internally per workspace.
@@ -19,6 +34,7 @@
 
 terraform {
   # Pin to a Schematics-supported Terraform version.
+  # 1.5 is required for `check` blocks and data-source lifecycle conditions.
   required_version = "~> 1.5"
 
   required_providers {
@@ -36,51 +52,179 @@ provider "ibm" {
 }
 
 ##############################################################################
-# Discover all enterprise child accounts dynamically
+# Step 1 — Resolve the authorization target (instance GUID + owning account)
+#
+# Both values can be derived from the instance CRN, which has the shape:
+#   crn:v1:bluemix:public:logs:<region>:a/<account_id>:<instance_guid>::
+#    0  1    2       3      4     5        6                7        8 9
 ##############################################################################
 
-# Look up the enterprise by name
-data "ibm_enterprises" "all" {
-  name = var.enterprise_name
-}
-
-# List every account in that enterprise
-data "ibm_enterprise_accounts" "all" {
-  enterprise_id = data.ibm_enterprises.all.enterprises[0].id
-}
-
-# Build a map of { account_name => account_id } for every account that is NOT
-# the central/management account (excluded via var.excluded_account_ids).
 locals {
-  child_accounts = {
-    for acct in data.ibm_enterprise_accounts.all.accounts :
-    acct.name => acct.id
-    if !contains(var.excluded_account_ids, acct.id)
+  crn_parts     = var.central_logs_crn == "" ? [] : split(":", var.central_logs_crn)
+  crn_is_usable = length(local.crn_parts) >= 8
+
+  # GUID of the central IBM Cloud Logs instance (the authorization target).
+  central_logs_instance_guid = (
+    var.central_logs_instance_id != "" ? var.central_logs_instance_id :
+    local.crn_is_usable ? local.crn_parts[7] : ""
+  )
+
+  # Account that owns that instance — i.e. the account this workspace runs in.
+  # It is excluded from discovery so the account never authorizes itself.
+  central_account_id = (
+    var.central_account_id != "" ? var.central_account_id :
+    local.crn_is_usable ? trimprefix(local.crn_parts[6], "a/") : ""
+  )
+}
+
+##############################################################################
+# Step 2 — Discover the enterprise child accounts
+#
+# ibm_enterprise_accounts takes NO enterprise_id argument. It calls the
+# Enterprise Management ListAccounts API unfiltered and returns every account
+# the workspace identity can see, including accounts nested inside account
+# groups. All scoping is therefore done locally, in step 3.
+#
+# The call only succeeds for an identity with enterprise access (normally an
+# identity in the enterprise/management account). If the workspace runs in a
+# plain child account, set var.child_account_ids instead and discovery is
+# skipped entirely — no enterprise API call is made.
+##############################################################################
+
+locals {
+  discovery_enabled    = var.discover_child_accounts && length(var.child_account_ids) == 0
+  filter_by_enterprise = local.discovery_enabled && var.enterprise_name != ""
+}
+
+# Optional: resolve the enterprise by name, only to scope the account list.
+data "ibm_enterprises" "selected" {
+  count = local.filter_by_enterprise ? 1 : 0
+  name  = var.enterprise_name
+}
+
+data "ibm_enterprise_accounts" "all" {
+  count = local.discovery_enabled ? 1 : 0
+
+  lifecycle {
+    postcondition {
+      condition     = length(self.accounts) > 0
+      error_message = "The Enterprise Management API returned no accounts. The Schematics execution identity most likely has no enterprise access — run this workspace in the enterprise (management) account, or set child_account_ids explicitly and leave discovery off."
+    }
   }
 }
 
 ##############################################################################
-# S2S authorizations — one pair per discovered child account
+# Step 3 — Decide, per account, whether it needs the authorizations
 ##############################################################################
 
-# logs-router → central IBM Cloud Logs
-resource "ibm_iam_authorization_policy" "logs_router_to_central_logs" {
-  for_each = local.child_accounts
+locals {
+  enterprise_id_filter = local.filter_by_enterprise ? data.ibm_enterprises.selected[0].enterprises[0].id : ""
 
-  source_service_name         = "logs-router"
-  source_service_account      = each.value
-  target_service_name         = "logs"
-  target_resource_instance_id = var.central_logs_instance_id
-  roles                       = ["Sender"]
+  raw_accounts = local.discovery_enabled ? data.ibm_enterprise_accounts.all[0].accounts : []
+
+  # Normalise every discovered account into a predictable shape.
+  accounts = [
+    for a in local.raw_accounts : {
+      id            = a.id
+      name          = try(coalesce(a.name, ""), "")
+      state         = try(lower(a.state), "")
+      enterprise_id = try(coalesce(a.enterprise_id, ""), "")
+      path          = try(coalesce(a.enterprise_path, ""), "")
+
+      # The management account is flagged by the API, and is also the account
+      # whose ID equals the enterprise account ID. Check both.
+      is_management = try(tostring(a.is_enterprise_account), "false") == "true" || a.id == try(a.enterprise_account_id, "")
+    }
+  ]
+
+  allowed_states = [for s in var.included_account_states : lower(s)]
+
+  # Why each discovered account was skipped. "" means "keep it".
+  skip_reason = {
+    for a in local.accounts : a.id => (
+      contains(var.excluded_account_ids, a.id) ? "listed in excluded_account_ids" :
+      (local.central_account_id != "" && a.id == local.central_account_id) ? "central logging account (owns the authorization target)" :
+      (a.is_management && var.exclude_management_account) ? "enterprise management account" :
+      (local.enterprise_id_filter != "" && a.enterprise_id != local.enterprise_id_filter) ? "not part of enterprise \"${var.enterprise_name}\"" :
+      (length(local.allowed_states) > 0 && !contains(local.allowed_states, a.state)) ? "account state \"${a.state}\" not in included_account_states" :
+      ""
+    )
+  }
+
+  discovered_child_accounts = {
+    for a in local.accounts : a.id => a.name
+    if local.skip_reason[a.id] == ""
+  }
+
+  # An explicit list always wins over discovery.
+  child_accounts = length(var.child_account_ids) > 0 ? {
+    for id in var.child_account_ids : id => "supplied via child_account_ids"
+  } : local.discovered_child_accounts
+
+  # The complete matrix of authorizations this enterprise needs:
+  # one entry per child account per source service.
+  authorizations = {
+    for pair in setproduct(keys(local.child_accounts), var.source_services) :
+    "${pair[0]}/${pair[1]}" => {
+      account_id     = pair[0]
+      account_name   = local.child_accounts[pair[0]]
+      source_service = pair[1]
+    }
+  }
 }
 
-# atracker → central IBM Cloud Logs
-resource "ibm_iam_authorization_policy" "atracker_to_central_logs" {
-  for_each = local.child_accounts
+# Warnings surfaced in the Schematics plan log rather than hard failures, so a
+# misconfigured filter is visible instead of silently producing nothing.
+check "child_accounts_resolved" {
+  assert {
+    condition     = length(local.child_accounts) > 0
+    error_message = "No child accounts resolved: this run would create zero authorizations. Check the enterprise_accounts output for the per-account skip reason, or set child_account_ids."
+  }
+}
 
-  source_service_name         = "atracker"
-  source_service_account      = each.value
-  target_service_name         = "logs"
-  target_resource_instance_id = var.central_logs_instance_id
-  roles                       = ["Sender"]
+check "target_resolved" {
+  assert {
+    condition     = local.central_logs_instance_guid != ""
+    error_message = "No authorization target resolved. Set central_logs_crn (preferred — the account ID is derived from it) or central_logs_instance_id."
+  }
+}
+
+check "central_account_known" {
+  assert {
+    condition     = local.central_account_id != ""
+    error_message = "The central account ID is unknown, so the central logging account cannot be auto-excluded from discovery. Set central_logs_crn (preferred) or central_account_id."
+  }
+}
+
+##############################################################################
+# Step 4 — One S2S authorization per child account per source service
+#
+# Keys are "<account_id>/<source_service>". Account IDs are immutable, so
+# renaming an account in the enterprise does not recreate its policies.
+##############################################################################
+
+resource "ibm_iam_authorization_policy" "child_to_central_logs" {
+  for_each = local.authorizations
+
+  source_service_name    = each.value.source_service
+  source_service_account = each.value.account_id
+
+  target_service_name         = var.target_service_name
+  target_resource_instance_id = local.central_logs_instance_guid
+
+  roles = var.authorization_roles
+
+  description = "Centralized logging: ${each.value.source_service} in child account ${each.value.account_id} may send to the central ${var.target_service_name} instance. Managed by Terraform."
+
+  lifecycle {
+    precondition {
+      condition     = local.central_logs_instance_guid != ""
+      error_message = "No authorization target resolved. Set central_logs_crn (preferred) or central_logs_instance_id."
+    }
+
+    precondition {
+      condition     = local.central_account_id == "" || each.value.account_id != local.central_account_id
+      error_message = "Child account ${each.value.account_id} is the central logging account itself. Remove it from child_account_ids — an account does not need an authorization to its own instance."
+    }
+  }
 }

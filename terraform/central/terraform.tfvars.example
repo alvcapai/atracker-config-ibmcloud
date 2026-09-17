@@ -10,8 +10,21 @@ ibmcloud_region = "us-south"
 enterprise_name = "My Enterprise"
 
 # GUID of the IBM Cloud Logs instance in the centralized Logging Account
-# Find it via: ibmcloud resource service-instance <name> --output json | jq '.[0].guid'
+# Find it via: ibmcloud resource service-instance <name> --output json | jq -r '.[0].guid'
 central_logs_instance_id = "REPLACE_WITH_CENTRAL_LOGS_INSTANCE_GUID"
+
+# Full CRN of the IBM Cloud Logs instance in the centralized Logging Account
+# Find it via: ibmcloud resource service-instance <name> --output json | jq -r '.[0].crn'
+# Embedded automatically in every child workspace payload — child workspaces do not need it separately.
+central_logs_crn = "REPLACE_WITH_CENTRAL_LOGS_CRN"
+
+# IBM Cloud region to deploy all child workspaces into.
+# Sets ibmcloud_region, logs_router_metadata_region, and atracker_target_region in each child.
+child_region = "us-south"
+
+# (Optional) Override the GitHub repository and branch if you have forked the repo.
+# github_repo_url = "https://github.com/alvcapai/atracker-config-ibmcloud"
+# github_branch   = "main"
 
 # Account IDs to exclude from auto-discovery — always include the management
 # account and the central Logging Account itself so they are not authorised

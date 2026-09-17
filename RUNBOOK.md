@@ -6,13 +6,18 @@ Step-by-step guide to deploy the centralized logging configuration using IBM Clo
 
 ## Overview
 
-Two Schematics workspaces must be deployed **in order**:
+Three steps must be executed **in order**:
 
 ```
 Step 1 — central/    (Logging Account)
-         Creates S2S Sender authorizations for every child account.
+         Creates S2S Sender authorizations for every child account AND
+         emits a ready-to-use Schematics workspace payload per child.
 
-Step 2 — child/      (each child account, one workspace per account)
+Step 2 — Automated   (still in Logging Account)
+         create-child-workspaces.sh reads the central output and creates
+         all child Schematics workspaces automatically — no manual JSON.
+
+Step 3 — child/      (each child workspace is applied in its own account)
          Deploys Logs Routing V3 + Activity Tracker enterprise-managed routes.
 ```
 
@@ -31,12 +36,13 @@ Before starting, collect the following values:
 | **Central Logging Account ID** | `ibmcloud account show` (logged into the Logging Account) |
 | **Central IBM Cloud Logs instance GUID** | `ibmcloud resource service-instance <name> --output json \| jq -r '.[0].guid'` |
 | **Central IBM Cloud Logs CRN** | `ibmcloud resource service-instance <name> --output json \| jq -r '.[0].crn'` |
-| **Child account primary region** | Region where workloads run (e.g. `us-south`) |
+| **Child accounts' primary region** | Region where workloads run (e.g. `us-south`) |
 
-Make sure you are logged in to the IBM Cloud CLI:
+Make sure you are logged in to the IBM Cloud CLI **as the central Logging Account**:
 
 ```bash
 ibmcloud login --sso
+ibmcloud target -c <CENTRAL_LOGGING_ACCOUNT_ID>
 ibmcloud target -g <resource-group>
 ```
 
@@ -44,15 +50,9 @@ ibmcloud target -g <resource-group>
 
 ## Step 1 — Deploy the `central/` workspace
 
-This workspace runs in the **centralized Logging Account**. It auto-discovers all enterprise child accounts and creates the required cross-account IAM S2S Sender authorizations.
+This workspace runs in the **centralized Logging Account**. It auto-discovers all enterprise child accounts, creates the required cross-account IAM S2S Sender authorizations, and **emits a fully populated Schematics workspace payload for every child account** via the `child_workspace_payloads` output.
 
-### 1.1 — Switch to the Logging Account
-
-```bash
-ibmcloud target -c <CENTRAL_LOGGING_ACCOUNT_ID>
-```
-
-### 1.2 — Create the Schematics workspace
+### 1.1 — Create the Schematics workspace
 
 ```bash
 ibmcloud schematics workspace new --file - <<'EOF'
@@ -60,7 +60,7 @@ ibmcloud schematics workspace new --file - <<'EOF'
   "name": "central-logging-authorizations",
   "type": ["terraform_v1.5"],
   "location": "us-south",
-  "description": "Creates cross-account S2S Sender authorizations for logs-router and atracker in all enterprise child accounts.",
+  "description": "Creates cross-account S2S Sender authorizations and generates child workspace payloads for all enterprise child accounts.",
   "template_repo": {
     "url": "https://github.com/alvcapai/atracker-config-ibmcloud",
     "branch": "main"
@@ -83,6 +83,15 @@ ibmcloud schematics workspace new --file - <<'EOF'
         "secure": true
       },
       {
+        "name": "central_logs_crn",
+        "value": "REPLACE_WITH_CENTRAL_LOGS_CRN",
+        "secure": true
+      },
+      {
+        "name": "child_region",
+        "value": "us-south"
+      },
+      {
         "name": "excluded_account_ids",
         "value": "[\"REPLACE_WITH_MANAGEMENT_ACCOUNT_ID\",\"REPLACE_WITH_CENTRAL_LOGGING_ACCOUNT_ID\"]"
       }
@@ -94,7 +103,7 @@ EOF
 
 > Note the **workspace ID** returned (format: `us-south.workspace.xxxxx`).
 
-### 1.3 — Run Plan and review
+### 1.2 — Run Plan and review
 
 ```bash
 ibmcloud schematics plan --id <WORKSPACE_ID>
@@ -105,7 +114,7 @@ ibmcloud schematics logs --id <WORKSPACE_ID> --act-id <ACTIVITY_ID>
 
 In the plan output, look for the `discovered_child_accounts` output and confirm **all expected child accounts** are listed.
 
-### 1.4 — Apply
+### 1.3 — Apply
 
 ```bash
 ibmcloud schematics apply --id <WORKSPACE_ID> --force
@@ -115,84 +124,54 @@ Wait for `Activity status: COMPLETED` before moving to Step 2.
 
 ---
 
-## Step 2 — Deploy one `child/` workspace per child account
+## Step 2 — Auto-create all child workspaces
 
-Repeat this step for **every child account**. Each workspace is fully independent with its own Terraform state.
-
-### 2.1 — Switch to the child account
+Run the automation script from the **central Logging Account** context. It reads the `child_workspace_payloads` output and creates one Schematics workspace per discovered child account — no manual JSON editing required.
 
 ```bash
-ibmcloud target -c <CHILD_ACCOUNT_ID>
+./scripts/create-child-workspaces.sh <CENTRAL_WORKSPACE_ID>
 ```
 
-### 2.2 — Create the Schematics workspace
+The script will:
+1. Fetch `child_workspace_payloads` from the central workspace outputs.
+2. Skip any child workspace whose name already exists (safe to re-run).
+3. Print a summary of created vs skipped workspaces.
 
-Replace the variable values with the actual values for this specific child account.
+> The script creates workspaces but does **not** apply them — review plans first.
 
-```bash
-ibmcloud schematics workspace new --file - <<'EOF'
-{
-  "name": "child-logging-REPLACE_WITH_NAME_PREFIX",
-  "type": ["terraform_v1.5"],
-  "location": "us-south",
-  "description": "Deploys Logs Routing V3 and Activity Tracker enterprise-managed routes for this child account.",
-  "template_repo": {
-    "url": "https://github.com/alvcapai/atracker-config-ibmcloud",
-    "branch": "main"
-  },
-  "template_data": [{
-    "folder": "terraform/child",
-    "type": "terraform_v1.5",
-    "variablestore": [
-      {
-        "name": "ibmcloud_region",
-        "value": "us-south"
-      },
-      {
-        "name": "central_logs_crn",
-        "value": "REPLACE_WITH_CENTRAL_LOGS_CRN",
-        "secure": true
-      },
-      {
-        "name": "logs_router_metadata_region",
-        "value": "us-south"
-      },
-      {
-        "name": "atracker_target_region",
-        "value": "us-south"
-      },
-      {
-        "name": "name_prefix",
-        "value": "REPLACE_WITH_NAME_PREFIX"
-      }
-    ]
-  }]
-}
-EOF
-```
+---
 
-### 2.3 — Run Plan and review carefully
+## Step 3 — Plan and apply all child workspaces
+
+### 3.1 — Plan each child workspace
 
 ```bash
-ibmcloud schematics plan --id <WORKSPACE_ID>
-ibmcloud schematics logs --id <WORKSPACE_ID> --act-id <ACTIVITY_ID>
+# List all child workspace IDs created by the script
+ibmcloud schematics workspace list --output json \
+  | jq -r '.workspaces[] | select(.name | startswith("child-logging-")) | .id'
+
+# Plan a specific child workspace
+ibmcloud schematics plan --id <CHILD_WORKSPACE_ID>
+ibmcloud schematics logs --id <CHILD_WORKSPACE_ID> --act-id <ACTIVITY_ID>
 ```
 
 > ⚠️ **Review `ibm_logs_router_settings` changes carefully** in existing accounts. This resource controls the primary metadata region — an unintended change can affect pre-existing Logs Routing configuration.
 
-### 2.4 — Apply
+### 3.2 — Apply
 
 ```bash
-ibmcloud schematics apply --id <WORKSPACE_ID> --force
+ibmcloud schematics apply --id <CHILD_WORKSPACE_ID> --force
 ```
+
+Repeat for each child workspace. Each one is fully independent with its own Terraform state.
 
 ---
 
-## Step 3 — Validate
+## Step 4 — Validate
 
 Run these checks **inside each child account** after apply completes.
 
-### 3.1 — Control-plane checks
+### 4.1 — Control-plane checks
 
 ```bash
 # Activity Tracker — confirm enterprise-managed target and wildcard route exist
@@ -210,19 +189,13 @@ Expected results:
 - Logs Routing target has `managed_by = enterprise`
 - Logs Routing route has `managed_by = enterprise`
 
-### 3.2 — Data-plane checks (central account)
+### 4.2 — Data-plane checks (central account)
 
 1. Open the **IBM Cloud Logs dashboard** in the centralized Logging Account.
 2. Search for the child account's CRN or a known resource name.
 3. Confirm an **Activity Tracker audit event** from the child account is present.
 4. Confirm a **platform log** from a supported IBM Cloud service in the child account is present.
 5. Record the validation timestamp and child account ID in your rollout evidence.
-
----
-
-## Step 4 — Repeat for remaining child accounts
-
-Go back to **Step 2** and repeat for each additional child account, changing `name_prefix` and `ibmcloud_region` as appropriate per account.
 
 ---
 
@@ -250,17 +223,23 @@ See [Enterprise IAM Action Control templates](https://cloud.ibm.com/docs/enterpr
 | `ibmcloud_region` | `us-south` | No |
 | `enterprise_name` | `My Enterprise` | No |
 | `central_logs_instance_id` | `a1b2c3d4-...` (GUID) | **Yes** |
-| `excluded_account_ids` | `["abc123","def456"]` | No |
-
-### `child/` workspace
-
-| Variable | Example value | Sensitive |
-|---|---|---|
-| `ibmcloud_region` | `us-south` | No |
 | `central_logs_crn` | `crn:v1:bluemix:public:logs:...` | **Yes** |
-| `logs_router_metadata_region` | `us-south` | No |
-| `atracker_target_region` | `us-south` | No |
-| `name_prefix` | `prod-us-south` | No |
+| `child_region` | `us-south` | No |
+| `github_repo_url` | `https://github.com/alvcapai/atracker-config-ibmcloud` | No |
+| `github_branch` | `main` | No |
+| `excluded_account_ids` | `["mgmt-id","logging-id"]` | No |
+
+> `child_region`, `github_repo_url`, and `github_branch` have sensible defaults and only need to be specified if they differ from the defaults.
+
+### `child/` workspace (generated automatically — no manual editing needed)
+
+| Variable | Set by | Sensitive |
+|---|---|---|
+| `ibmcloud_region` | `child_region` from central | No |
+| `central_logs_crn` | `central_logs_crn` from central | **Yes** |
+| `logs_router_metadata_region` | `child_region` from central | No |
+| `atracker_target_region` | `child_region` from central | No |
+| `name_prefix` | derived from child account name | No |
 
 ---
 
@@ -279,4 +258,8 @@ ibmcloud schematics logs --id <WORKSPACE_ID> --act-id <ACTIVITY_ID>
 # Destroy a workspace (if rollback needed)
 ibmcloud schematics destroy --id <WORKSPACE_ID> --force
 ibmcloud schematics workspace delete --id <WORKSPACE_ID> --force
+
+# List all child workspace IDs
+ibmcloud schematics workspace list --output json \
+  | jq -r '.workspaces[] | select(.name | startswith("child-logging-")) | [.name, .id] | @tsv'
 ```
