@@ -1,35 +1,59 @@
 ##############################################################################
 # central/ — example variable values (copy to terraform.tfvars and fill in)
+#
+# Two layouts are supported. Pick ONE of the blocks below.
 ##############################################################################
 
 # IBM Cloud region where the central IBM Cloud Logs instance lives
 ibmcloud_region = "us-south"
 
-# Display name of your IBM Cloud Enterprise
-# Find it via: ibmcloud enterprise show
-enterprise_name = "My Enterprise"
+# Full CRN of the central IBM Cloud Logs instance.
+# This single value gives the module both the instance GUID (the authorization
+# target) and the account ID that owns it (auto-excluded from discovery).
+#   ibmcloud resource service-instance <name> --output json | jq -r '.[0].crn'
+central_logs_crn = "crn:v1:bluemix:public:logs:us-south:a/REPLACE_ACCOUNT_ID:REPLACE_INSTANCE_GUID::"
 
-# GUID of the IBM Cloud Logs instance in the centralized Logging Account
-# Find it via: ibmcloud resource service-instance <name> --output json | jq -r '.[0].guid'
-central_logs_instance_id = "REPLACE_WITH_CENTRAL_LOGS_INSTANCE_GUID"
+##############################################################################
+# Layout A — the central Logs instance is in the enterprise (management)
+# account, so this workspace can list the child accounts itself.
+# Nothing else is required: discovery is on by default and the management
+# account plus the central account are excluded automatically.
+##############################################################################
 
-# Full CRN of the IBM Cloud Logs instance in the centralized Logging Account
-# Find it via: ibmcloud resource service-instance <name> --output json | jq -r '.[0].crn'
-# Embedded automatically in every child workspace payload — child workspaces do not need it separately.
-central_logs_crn = "REPLACE_WITH_CENTRAL_LOGS_CRN"
+# Optional extra scoping, only if the identity can see more than one enterprise
+# enterprise_name = "My Enterprise"
 
-# IBM Cloud region to deploy all child workspaces into.
-# Sets ibmcloud_region, logs_router_metadata_region, and atracker_target_region in each child.
-child_region = "us-south"
+# Optional: accounts you deliberately keep out of centralized logging
+# excluded_account_ids = ["SOME_SANDBOX_ACCOUNT_ID"]
 
-# (Optional) Override the GitHub repository and branch if you have forked the repo.
-# github_repo_url = "https://github.com/alvcapai/atracker-config-ibmcloud"
-# github_branch   = "main"
+##############################################################################
+# Layout B — the central Logs instance is in a dedicated logging account.
+# That account has no enterprise access, so the enterprise API cannot be
+# called from here. Supply the list instead; run this from the enterprise
+# account to produce it:
+#
+#   ibmcloud enterprise accounts --output JSON | jq -r '.[].id'
+#
+# Re-run that command and update this list whenever an account joins the
+# enterprise, then re-apply. The plan shows exactly which authorizations are
+# added.
+##############################################################################
 
-# Account IDs to exclude from auto-discovery — always include the management
-# account and the central Logging Account itself so they are not authorised
-# against their own instance.
-excluded_account_ids = [
-  "REPLACE_WITH_MANAGEMENT_ACCOUNT_ID",
-  "REPLACE_WITH_CENTRAL_LOGGING_ACCOUNT_ID",
-]
+# child_account_ids = [
+#   "REPLACE_CHILD_ACCOUNT_ID_1",
+#   "REPLACE_CHILD_ACCOUNT_ID_2",
+# ]
+
+##############################################################################
+# Rarely changed
+##############################################################################
+
+# Source services in each child account that must reach the central instance.
+# source_services = ["logs-router", "atracker"]
+
+# Roles required by both enterprise routing scenarios.
+# authorization_roles = ["Sender"]
+
+# Account states to include. Set to [] if your enterprise returns a state
+# value that is not "ACTIVE" — check the enterprise_accounts output.
+# included_account_states = ["ACTIVE"]

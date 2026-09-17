@@ -5,7 +5,7 @@ Implements the **IBM Cloud Enterprise Centralized Logging Configuration Guide v2
 
 | Workspace | Directory | Account | Purpose |
 |-----------|-----------|---------|---------|
-| **central** | `terraform/central/` | Logging Account | Auto-discovers all enterprise child accounts and creates cross-account S2S Sender authorizations for `logs-router` and `atracker` |
+| **central** | `terraform/central/` | Account that owns the central IBM Cloud Logs instance | Lists the enterprise child accounts and creates one cross-account S2S `Sender` authorization per child account per source service (`logs-router`, `atracker`) |
 | **child** | `terraform/child/` | Each child account | Logs Routing V3 target + route, Activity Tracker target + wildcard route |
 
 ---
@@ -24,7 +24,43 @@ Enterprise child accounts                     Centralized Logging Account
     wildcard route (locations=*)
 ```
 
-S2S Sender authorizations (created in the central workspace) grant `logs-router` and `atracker` in each child account permission to write to the central IBM Cloud Logs instance. Child accounts are **auto-discovered** from the IBM Cloud Enterprise — no manual account list is needed.
+S2S Sender authorizations (created in the central workspace) grant `logs-router` and `atracker` in each child account permission to write to the central IBM Cloud Logs instance.
+
+---
+
+## How `central/` finds the child accounts
+
+One authorization is needed per child account per source service, and each one is created in the account that owns the **target** — the central IBM Cloud Logs instance. So the whole set is managed from a single workspace, driven by a list of account IDs.
+
+That list comes from one of two places, and the module picks automatically:
+
+```
+child_account_ids set?  ──yes──►  use it verbatim, no enterprise API call
+        │
+        no
+        ▼
+discover_child_accounts ──►  Enterprise Management ListAccounts
+                             └─ filter out: central account (from the CRN),
+                                management account, excluded_account_ids,
+                                accounts outside enterprise_name,
+                                accounts whose state is not ACTIVE
+                                        │
+                                        ▼
+                             child_accounts × source_services
+                                        │
+                                        ▼
+                             ibm_iam_authorization_policy
+                               keyed "<account_id>/<source_service>"
+```
+
+Things worth knowing about the discovery:
+
+- **`ibm_enterprise_accounts` has no `enterprise_id` argument.** It calls `ListAccounts` unfiltered and returns every account the workspace identity can see, including accounts nested inside account groups. All scoping happens in `locals`, which is why `enterprise_name` is only an optional extra filter.
+- **The call needs enterprise access.** An identity in a plain child account gets nothing back, and the data source's postcondition fails with an explanation. That is the case for `child_account_ids`.
+- **Resources are keyed by account ID, not account name.** Account IDs are immutable and unique; names can be changed and can repeat inside an enterprise, which would collide in a `for_each` map.
+- **A plan is the inventory.** `enterprise_accounts`, `child_accounts`, `excluded_accounts` and `authorizations_required` are all computed at plan time, so you can list everything that would be created without applying.
+- **Nothing is marked sensitive.** CRNs, GUIDs and account IDs are identifiers, not credentials, and Terraform refuses to use sensitive values in `for_each` keys.
+- **Pre-existing policies are invisible to Terraform.** The provider has no data source for authorization policies; see the appendix in [RUNBOOK.md](../RUNBOOK.md) for reconciling policies that were created by hand.
 
 ---
 
@@ -34,8 +70,8 @@ S2S Sender authorizations (created in the central workspace) grant `logs-router`
 |------|--------|
 | No `backend` block | Schematics manages Terraform state internally per workspace |
 | No `ibmcloud_api_key` variable | Credentials are injected by the Schematics execution identity (trusted profile or service ID) |
-| `required_version = "~> 1.5"` | Pinned to a supported Schematics Terraform version |
-| `sensitive = true` on secrets | `central_logs_instance_id` and `central_logs_crn` are masked in Schematics logs and UI |
+| `required_version = "~> 1.5"` | Pinned to a supported Schematics Terraform version. 1.5 is also the minimum for `check` blocks and data-source `postcondition` |
+| Identifiers are not `sensitive` | Marking a CRN or account ID sensitive taints every derived value, and Terraform rejects sensitive values in `for_each` keys — which is how `central/` iterates over child accounts |
 | Plain `description` strings | Schematics renders variable descriptions as UI field labels |
 | `schematics.env` files | Provide default environment variable values for each workspace |
 
@@ -43,9 +79,9 @@ S2S Sender authorizations (created in the central workspace) grant `logs-router`
 
 ## Prerequisites
 
-1. Provision the **IBM Cloud Logs instance** in the centralized Logging Account. Record its CRN and instance GUID.
+1. Provision the **IBM Cloud Logs instance** in the account that will hold the centralized logs. Record its **CRN** — `central/` derives both the instance GUID and the owning account ID from it.
 2. Ensure the **Schematics execution identity** (trusted profile or service ID) has:
-   - `central/` workspace: IAM permission to manage authorization policies in the Logging Account and Enterprise Administrator or Viewer access to list accounts.
+   - `central/` workspace: **Administrator** on IBM Cloud Logs (or on that instance) in the account the workspace runs in — required to create a cross-account authorization against it. To use auto-discovery, the same identity also needs enterprise access to list accounts (Enterprise Management service, Viewer or higher, assigned in the enterprise account). Without it, set `child_account_ids`.
    - `child/` workspace: IAM permission to manage Logs Routing and Activity Tracker resources in the child account.
 3. Store this Terraform source in a **Git repository** accessible to Schematics (GitHub, GitLab, Bitbucket, or IBM Cloud hosted Git).
 
@@ -53,7 +89,9 @@ S2S Sender authorizations (created in the central workspace) grant `logs-router`
 
 ## Deployment order
 
-### Step 1 — Create and apply the `central/` Schematics workspace (Logging Account)
+### Step 1 — Create and apply the `central/` Schematics workspace
+
+Run it in the account that owns the central IBM Cloud Logs instance.
 
 **Via IBM Cloud Console:**
 
@@ -66,12 +104,13 @@ S2S Sender authorizations (created in the central workspace) grant `logs-router`
 | Variable | Value |
 |---|---|
 | `ibmcloud_region` | Region of the central IBM Cloud Logs instance (e.g. `us-south`) |
-| `enterprise_name` | Display name of your IBM Cloud Enterprise (`ibmcloud enterprise show`) |
-| `central_logs_instance_id` | GUID of the central IBM Cloud Logs instance (**sensitive**) |
-| `excluded_account_ids` | List containing the management account ID and the central Logging Account ID |
+| `central_logs_crn` | Full CRN of the central instance — the only identifier normally needed |
+| `enterprise_name` | *Optional.* Display name of your enterprise (`ibmcloud enterprise show`), to scope discovery to it |
+| `child_account_ids` | *Only when the workspace has no enterprise access.* The explicit list of child account IDs; turns discovery off |
+| `excluded_account_ids` | *Optional.* Accounts you deliberately keep out — the central and management accounts are excluded automatically |
 
 6. Click **Save changes**, then **Generate plan**.
-7. Review the `discovered_child_accounts` output in the plan — confirm all expected child accounts appear.
+7. Review `enterprise_accounts`, `child_accounts` and `authorizations_required` in the plan — confirm every expected child account is `included` and read `skipped_because` for the ones that are not.
 8. Click **Apply plan**.
 
 **Via IBM Cloud CLI:**
@@ -90,10 +129,9 @@ ibmcloud schematics workspace new \
     "folder": "terraform/central",
     "type": "terraform_v1.5",
     "variablestore": [
-      { "name": "ibmcloud_region",          "value": "us-south" },
-      { "name": "enterprise_name",          "value": "My Enterprise" },
-      { "name": "central_logs_instance_id", "value": "REPLACE_GUID", "secure": true },
-      { "name": "excluded_account_ids",     "value": "[\"MGMT_ACCT_ID\",\"LOGGING_ACCT_ID\"]" }
+      { "name": "ibmcloud_region",  "value": "us-south" },
+      { "name": "central_logs_crn", "value": "crn:v1:bluemix:public:logs:us-south:a/ACCOUNT_ID:INSTANCE_GUID::" },
+      { "name": "enterprise_name",  "value": "My Enterprise" }
     ]
   }]
 }
@@ -103,6 +141,15 @@ EOF
 ibmcloud schematics plan  --id <WORKSPACE_ID>
 ibmcloud schematics apply --id <WORKSPACE_ID>
 ```
+
+If the central instance lives in a dedicated logging account that cannot call the enterprise API, generate the list from the management account and pass it instead of `enterprise_name`:
+
+```bash
+ibmcloud enterprise accounts --output JSON | jq -c '[.[] | select(.state == "ACTIVE") | .id]'
+# → use as: { "name": "child_account_ids", "value": "[\"CHILD_ID_1\",\"CHILD_ID_2\"]" }
+```
+
+Re-running plan and apply is all it takes when a new account joins the enterprise — see **Step 1b** in [RUNBOOK.md](../RUNBOOK.md).
 
 ---
 
@@ -190,6 +237,30 @@ Protect at minimum:
 **Activity Tracker:** `atracker.route.update`, `atracker.route.delete`, `atracker.target.update`, `atracker.target.delete`, `atracker.setting.update`
 
 See [Enterprise IAM Action Control templates](https://cloud.ibm.com/docs/enterprise-management?topic=enterprise-management-act-template-create).
+
+---
+
+## `central/` outputs
+
+| Output | Use |
+|---|---|
+| `enterprise_accounts` | Every account returned by the enterprise, with `state`, `is_management`, `enterprise_path`, `included` and `skipped_because` |
+| `enterprise_accounts_count` | How many accounts the API returned before filtering |
+| `child_accounts` / `child_accounts_count` | Account ID → name for the accounts that get authorized |
+| `excluded_accounts` | Account ID → reason it was skipped |
+| `authorizations_required` / `authorizations_required_count` | The full matrix, keyed `<account_id>/<source_service>`, with source, target and roles — available at plan time |
+| `authorization_ids` | `<account_id>/<source_service>` → IAM policy ID actually created |
+| `logs_router_auth_ids` / `atracker_auth_ids` | Per-service views of the same, keyed by account ID |
+| `central_account_id` / `central_logs_instance_guid` | Parsed from `central_logs_crn`, to confirm the target |
+| `verification_commands` | Ready-to-paste commands to list what exists in the central account |
+
+---
+
+## Migrating from the earlier version of `central/`
+
+The previous `central/main.tf` passed `enterprise_id` to `data "ibm_enterprise_accounts"`. That argument does not exist in the provider schema, so the workspace failed at `plan` with *"An argument named `enterprise_id` is not expected here"* — which means it can never have applied, and there is no state to migrate. Create or update the workspace with the variables above and plan again.
+
+If you did somehow apply an earlier variant, note that resource keys changed from account **name** to `"<account_id>/<source_service>"`, so Terraform would replace the policies. Schematics does not expose `terraform state mv`; the practical path is to destroy that workspace and re-apply this one, accepting a short gap in routing.
 
 ---
 
