@@ -44,10 +44,18 @@ resource "ibm_logs_router_settings" "central" {
 }
 
 # 4.2 Create the enterprise-managed Logs Routing target
+#     Explicit depends_on: the target API rejects the request with
+#     "primary_metadata_region in settings is empty" unless the account's
+#     Logs Routing settings are already in place. Nothing here references
+#     ibm_logs_router_settings.central, so without this Terraform has no
+#     dependency edge between them and creates both concurrently, racing the
+#     settings write against the target's CreateTarget call.
 resource "ibm_logs_router_target" "central" {
   destination_crn = var.central_logs_crn
   name            = "enterprise-central-logging-platform-target"
   managed_by      = "enterprise"
+
+  depends_on = [ibm_logs_router_settings.central]
 }
 
 # 4.3 Route all supported platform logs to the central target
