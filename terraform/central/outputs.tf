@@ -99,6 +99,16 @@ output "central_logs_instance_guid" {
   value       = local.central_logs_instance_guid
 }
 
+output "central_logs_crn" {
+  description = "CRN of the central IBM Cloud Logs instance used as the authorization target — either the CRN supplied via central_logs_crn, or the CRN of the instance this workspace just created. Empty when only central_logs_instance_id was supplied. Copy this value into central_logs_crn for every child/ workspace."
+  value       = local.central_logs_crn_resolved
+}
+
+output "central_logs_instance_created" {
+  description = "Whether this apply provisioned a new IBM Cloud Logs instance because no existing central_logs_crn or central_logs_instance_id was supplied."
+  value       = local.create_central_logs_instance
+}
+
 output "verification_commands" {
   description = "Commands to run in the central logging account after apply, to compare what exists against authorizations_required."
   value = [

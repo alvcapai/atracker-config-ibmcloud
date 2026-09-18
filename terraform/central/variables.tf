@@ -47,6 +47,45 @@ variable "central_account_id" {
   default     = ""
 }
 
+##############################################################################
+# Auto-provisioning — used only when no existing instance was supplied
+##############################################################################
+
+variable "create_central_logs_instance" {
+  description = "When true (default) and neither central_logs_crn nor central_logs_instance_id is set, provision a new IBM Cloud Logs instance in this account and use it as the authorization target. Set to false to require an existing instance instead of creating one."
+  type        = bool
+  default     = true
+}
+
+variable "central_logs_instance_name" {
+  description = "Name for the IBM Cloud Logs instance created when create_central_logs_instance applies. Ignored when an existing instance is supplied."
+  type        = string
+  default     = "central-logging"
+}
+
+variable "central_logs_plan" {
+  description = "Plan for the IBM Cloud Logs instance created when create_central_logs_instance applies. Ignored when an existing instance is supplied."
+  type        = string
+  default     = "standard"
+}
+
+variable "central_logs_resource_group_id" {
+  description = "Resource group ID for the IBM Cloud Logs instance created when create_central_logs_instance applies. Leave empty to use the account's Default resource group. Ignored when an existing instance is supplied."
+  type        = string
+  default     = ""
+}
+
+variable "central_logs_service_endpoints" {
+  description = "Service endpoints for the IBM Cloud Logs instance created when create_central_logs_instance applies: public, private, or public-and-private. Ignored when an existing instance is supplied."
+  type        = string
+  default     = "public"
+
+  validation {
+    condition     = contains(["public", "private", "public-and-private"], var.central_logs_service_endpoints)
+    error_message = "central_logs_service_endpoints must be one of: public, private, public-and-private."
+  }
+}
+
 variable "target_service_name" {
   description = "Target service of the authorizations. Keep the default 'logs' for IBM Cloud Logs. Change it only if you reuse this module for another centralized destination, e.g. 'sysdig-monitor' for IBM Cloud Monitoring with metrics-router as the source service."
   type        = string

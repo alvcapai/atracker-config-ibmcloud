@@ -352,9 +352,14 @@ See [Enterprise IAM Action Control templates](https://cloud.ibm.com/docs/enterpr
 | Variable | Example value | Required |
 |---|---|---|
 | `ibmcloud_region` | `us-south` | Defaults to `us-south` |
-| `central_logs_crn` | `crn:v1:bluemix:public:logs:us-south:a/ACCT:GUID::` | **Yes** (or `central_logs_instance_id`) |
-| `central_logs_instance_id` | `a1b2c3d4-...` (GUID) | Only if no CRN is given |
-| `central_account_id` | `abc123...` | Only if no CRN is given |
+| `central_logs_crn` | `crn:v1:bluemix:public:logs:us-south:a/ACCT:GUID::` | No — leave empty to auto-create an instance (see below) |
+| `central_logs_instance_id` | `a1b2c3d4-...` (GUID) | Only if no CRN is given, and not auto-creating |
+| `central_account_id` | `abc123...` | Only if no CRN is given, and not auto-creating |
+| `create_central_logs_instance` | `true` | No — default `true`; provisions a new instance when no CRN/instance ID is supplied. Set `false` to require an existing instance |
+| `central_logs_instance_name` | `central-logging` | No — only used when auto-creating |
+| `central_logs_plan` | `standard` | No — only used when auto-creating |
+| `central_logs_resource_group_id` | `abc123...` | No — only used when auto-creating; defaults to the account's Default resource group |
+| `central_logs_service_endpoints` | `public` | No — only used when auto-creating |
 | `child_account_ids` | `["abc123","def456"]` | Layout B only — turns discovery off |
 | `enterprise_name` | `My Enterprise` | No — extra scoping filter |
 | `discover_child_accounts` | `true` | No |

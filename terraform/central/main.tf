@@ -6,15 +6,19 @@
 # authorization before the child routes are applied.
 #
 # What it does
-#   1. Lists every account of the IBM Cloud Enterprise (Enterprise Management
+#   1. Resolves the authorization target: an existing IBM Cloud Logs instance
+#      given via central_logs_crn / central_logs_instance_id, or — when
+#      neither is supplied and create_central_logs_instance is true (the
+#      default) — a brand new instance this workspace provisions itself.
+#   2. Lists every account of the IBM Cloud Enterprise (Enterprise Management
 #      ListAccounts API) — or uses the explicit list in var.child_account_ids
 #      when the workspace identity has no enterprise access.
-#   2. Filters that list: drops the enterprise management account, the central
+#   3. Filters that list: drops the enterprise management account, the central
 #      logging account itself, anything in var.excluded_account_ids and any
 #      account whose state is not in var.included_account_states.
-#   3. Creates one IAM authorization policy per (child account × source
+#   4. Creates one IAM authorization policy per (child account × source
 #      service) pair, all targeting the central IBM Cloud Logs instance.
-#   4. Reports the full decision table through outputs, so the plan itself is
+#   5. Reports the full decision table through outputs, so the plan itself is
 #      the inventory of "authorizations needed vs. authorizations created".
 #
 # Where each authorization lives
@@ -54,26 +58,80 @@ provider "ibm" {
 ##############################################################################
 # Step 1 — Resolve the authorization target (instance GUID + owning account)
 #
-# Both values can be derived from the instance CRN, which has the shape:
+# central_logs_crn is the preferred input. Its shape is:
 #   crn:v1:bluemix:public:logs:<region>:a/<account_id>:<instance_guid>::
 #    0  1    2       3      4     5        6                7        8 9
+#
+# When neither central_logs_crn nor central_logs_instance_id is supplied and
+# var.create_central_logs_instance is true (the default), this workspace
+# provisions a new IBM Cloud Logs instance itself and uses it as the
+# authorization target, so deployment can proceed without a pre-existing one.
 ##############################################################################
 
 locals {
-  crn_parts     = var.central_logs_crn == "" ? [] : split(":", var.central_logs_crn)
-  crn_is_usable = length(local.crn_parts) >= 8
+  input_crn_parts  = var.central_logs_crn == "" ? [] : split(":", var.central_logs_crn)
+  input_crn_usable = length(local.input_crn_parts) >= 8
 
+  # An existing instance was supplied, either as a CRN or a bare GUID.
+  existing_instance_supplied = local.input_crn_usable || var.central_logs_instance_id != ""
+
+  create_central_logs_instance = var.create_central_logs_instance && !local.existing_instance_supplied
+}
+
+# Always read the account's default resource group when creating a new
+# instance — both to resolve resource_group_id when the caller did not
+# supply one, and to read the account ID up front. A data source is read at
+# plan time (unlike a resource's computed attributes, which are only known
+# after apply), which keeps central_account_id — and therefore the for_each
+# keys on local.authorizations, which are filtered by it — known during
+# plan instead of depending on the instance this same apply is about to
+# create.
+data "ibm_resource_group" "central_logs" {
+  count      = local.create_central_logs_instance ? 1 : 0
+  is_default = true
+}
+
+# Created only when no existing central Logs instance was supplied. Runs in
+# this workspace's own account, which is exactly the account the central
+# instance must live in.
+resource "ibm_resource_instance" "central_logs" {
+  count             = local.create_central_logs_instance ? 1 : 0
+  name              = var.central_logs_instance_name
+  service           = "logs"
+  plan              = var.central_logs_plan
+  location          = var.ibmcloud_region
+  resource_group_id = var.central_logs_resource_group_id != "" ? var.central_logs_resource_group_id : data.ibm_resource_group.central_logs[0].id
+
+  parameters = {
+    service-endpoints = var.central_logs_service_endpoints
+  }
+}
+
+locals {
   # GUID of the central IBM Cloud Logs instance (the authorization target).
+  # Only used as a resource attribute (never a for_each key), so it is fine
+  # for this to stay unknown until the new instance is actually created.
   central_logs_instance_guid = (
     var.central_logs_instance_id != "" ? var.central_logs_instance_id :
-    local.crn_is_usable ? local.crn_parts[7] : ""
+    local.input_crn_usable ? local.input_crn_parts[7] :
+    local.create_central_logs_instance ? ibm_resource_instance.central_logs[0].guid : ""
   )
 
-  # Account that owns that instance — i.e. the account this workspace runs in.
-  # It is excluded from discovery so the account never authorizes itself.
+  # Account that owns the target instance — i.e. the account this workspace
+  # runs in. It is excluded from discovery so the account never authorizes
+  # itself, and that exclusion drives a for_each key, so this must be known
+  # at plan time: from the supplied CRN/variable, or from the resource-group
+  # data source above — never from the not-yet-created instance's CRN.
   central_account_id = (
     var.central_account_id != "" ? var.central_account_id :
-    local.crn_is_usable ? trimprefix(local.crn_parts[6], "a/") : ""
+    local.input_crn_usable ? trimprefix(local.input_crn_parts[6], "a/") :
+    local.create_central_logs_instance ? data.ibm_resource_group.central_logs[0].account_id : ""
+  )
+
+  # Full CRN to surface as an output, for copying into child/ workspaces.
+  central_logs_crn_resolved = (
+    local.input_crn_usable ? var.central_logs_crn :
+    local.create_central_logs_instance ? ibm_resource_instance.central_logs[0].crn : ""
   )
 }
 
@@ -185,14 +243,14 @@ check "child_accounts_resolved" {
 check "target_resolved" {
   assert {
     condition     = local.central_logs_instance_guid != ""
-    error_message = "No authorization target resolved. Set central_logs_crn (preferred — the account ID is derived from it) or central_logs_instance_id."
+    error_message = "No authorization target resolved and create_central_logs_instance is false. Set central_logs_crn (preferred — the account ID is derived from it), central_logs_instance_id, or leave create_central_logs_instance at its default (true) so this workspace provisions a new IBM Cloud Logs instance."
   }
 }
 
 check "central_account_known" {
   assert {
     condition     = local.central_account_id != ""
-    error_message = "The central account ID is unknown, so the central logging account cannot be auto-excluded from discovery. Set central_logs_crn (preferred) or central_account_id."
+    error_message = "The central account ID is unknown, so the central logging account cannot be auto-excluded from discovery. Set central_logs_crn (preferred), central_account_id, or leave create_central_logs_instance at its default (true) so this workspace provisions a new instance and derives the account ID from it."
   }
 }
 
@@ -219,7 +277,7 @@ resource "ibm_iam_authorization_policy" "child_to_central_logs" {
   lifecycle {
     precondition {
       condition     = local.central_logs_instance_guid != ""
-      error_message = "No authorization target resolved. Set central_logs_crn (preferred) or central_logs_instance_id."
+      error_message = "No authorization target resolved. Set central_logs_crn (preferred), central_logs_instance_id, or leave create_central_logs_instance at its default (true)."
     }
 
     precondition {

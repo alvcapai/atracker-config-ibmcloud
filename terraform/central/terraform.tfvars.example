@@ -4,13 +4,19 @@
 # Two layouts are supported. Pick ONE of the blocks below.
 ##############################################################################
 
-# IBM Cloud region where the central IBM Cloud Logs instance lives
+# IBM Cloud region where the central IBM Cloud Logs instance lives (or will
+# be created)
 ibmcloud_region = "us-south"
 
-# Full CRN of the central IBM Cloud Logs instance.
+# Full CRN of an EXISTING central IBM Cloud Logs instance.
 # This single value gives the module both the instance GUID (the authorization
 # target) and the account ID that owns it (auto-excluded from discovery).
 #   ibmcloud resource service-instance <name> --output json | jq -r '.[0].crn'
+#
+# Leave this empty (and leave central_logs_instance_id empty) to have this
+# workspace provision a brand new IBM Cloud Logs instance instead — that is
+# the default (create_central_logs_instance = true). See the
+# "Auto-provisioning" block below to name/place that instance.
 central_logs_crn = "crn:v1:bluemix:public:logs:us-south:a/REPLACE_ACCOUNT_ID:REPLACE_INSTANCE_GUID::"
 
 ##############################################################################
@@ -43,6 +49,17 @@ central_logs_crn = "crn:v1:bluemix:public:logs:us-south:a/REPLACE_ACCOUNT_ID:REP
 #   "REPLACE_CHILD_ACCOUNT_ID_1",
 #   "REPLACE_CHILD_ACCOUNT_ID_2",
 # ]
+
+##############################################################################
+# Auto-provisioning — only used when central_logs_crn and
+# central_logs_instance_id are both left empty
+##############################################################################
+
+# create_central_logs_instance = true
+# central_logs_instance_name   = "central-logging"
+# central_logs_plan            = "standard"
+# central_logs_resource_group_id = ""  # empty = account's Default resource group
+# central_logs_service_endpoints = "public"
 
 ##############################################################################
 # Rarely changed

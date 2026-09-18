@@ -104,10 +104,12 @@ Run it in the account that owns the central IBM Cloud Logs instance.
 | Variable | Value |
 |---|---|
 | `ibmcloud_region` | Region of the central IBM Cloud Logs instance (e.g. `us-south`) |
-| `central_logs_crn` | Full CRN of the central instance — the only identifier normally needed |
+| `central_logs_crn` | Full CRN of an *existing* central instance — the only identifier normally needed. Leave empty (with `central_logs_instance_id`) to have this workspace provision a new instance instead |
 | `enterprise_name` | *Optional.* Display name of your enterprise (`ibmcloud enterprise show`), to scope discovery to it |
 | `child_account_ids` | *Only when the workspace has no enterprise access.* The explicit list of child account IDs; turns discovery off |
 | `excluded_account_ids` | *Optional.* Accounts you deliberately keep out — the central and management accounts are excluded automatically |
+
+If `central_logs_crn` and `central_logs_instance_id` are both left empty, `create_central_logs_instance` (default `true`) provisions a new IBM Cloud Logs instance in this account — named by `central_logs_instance_name`, on `central_logs_plan`, in `central_logs_resource_group_id` (default: the account's Default resource group) — and uses it as the authorization target. Set `create_central_logs_instance = false` to require an existing instance instead. The CRN used (supplied or newly created) is exposed as the `central_logs_crn` output for copying into every `child/` workspace.
 
 6. Click **Save changes**, then **Generate plan**.
 7. Review `enterprise_accounts`, `child_accounts` and `authorizations_required` in the plan — confirm every expected child account is `included` and read `skipped_because` for the ones that are not.
