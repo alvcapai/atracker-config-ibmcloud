@@ -153,3 +153,41 @@ variable "included_account_states" {
   type        = list(string)
   default     = ["ACTIVE"]
 }
+
+##############################################################################
+# child/ workspace generation — feeds the child_workspace_variables and
+# child_workspace_payloads outputs, which carry everything scripts/
+# create-child-workspaces.sh needs to create the per-account child/
+# workspaces (central_logs_crn, logs_router_metadata_region,
+# atracker_target_region, name_prefix).
+##############################################################################
+
+variable "child_region_overrides" {
+  description = "Per-child-account region override, keyed by account ID, used for that account's logs_router_metadata_region and atracker_target_region in the child_workspace_variables / child_workspace_payloads outputs. Accounts not listed default to ibmcloud_region."
+  type        = map(string)
+  default     = {}
+}
+
+variable "child_workspace_repo_url" {
+  description = "Git repository URL used as template_repo.url in the generated child/ Schematics workspace-creation payloads (child_workspace_payloads output)."
+  type        = string
+  default     = "https://github.com/alvcapai/atracker-config-ibmcloud"
+}
+
+variable "child_workspace_repo_branch" {
+  description = "Git branch used as template_repo.branch in the generated child/ Schematics workspace-creation payloads (child_workspace_payloads output)."
+  type        = string
+  default     = "main"
+}
+
+variable "child_workspace_name_prefix" {
+  description = "Prefix prepended to the per-account name_prefix to form the generated child/ Schematics workspace name, e.g. 'child-logging-' + 'prod-us-south'."
+  type        = string
+  default     = "child-logging-"
+}
+
+variable "child_workspace_terraform_version" {
+  description = "Schematics Terraform version type string used for the generated child/ workspace-creation payloads, e.g. terraform_v1.5. Should match the version this workspace itself was created with."
+  type        = string
+  default     = "terraform_v1.5"
+}

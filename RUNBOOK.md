@@ -159,6 +159,8 @@ A plan is enough to get the full listing — nothing has to be created first. Ch
 | `excluded_accounts` | Account ID → reason it was left out. |
 | `authorizations_required` | The complete matrix, keyed `<account_id>/<source_service>`. Its length is `child_accounts × source_services` (2 per account by default). |
 | `central_account_id` / `central_logs_instance_guid` | Parsed from the CRN — confirm they are the logging account and the right instance. |
+| `child_workspace_variables` | The exact `central_logs_crn`, `logs_router_metadata_region`, `atracker_target_region` and `name_prefix` each `child/` workspace in Step 2 needs — copy straight from here. |
+| `child_workspace_payloads` | Ready-to-submit `child/` workspace-creation JSON per account (sensitive) — feed to `scripts/create-child-workspaces.sh` instead of building Step 2's payload by hand. |
 
 Two warnings are worth reacting to if they appear in the plan log:
 
@@ -222,6 +224,8 @@ For a different destination — centralized metrics, for example — deploy a se
 ## Step 2 — Deploy one `child/` workspace per child account
 
 Repeat this step for **every child account**. Each workspace is fully independent with its own Terraform state.
+
+> **Shortcut:** `central/` already computed everything a `child/` workspace needs — read its `child_workspace_variables` output for the plain values, or its `child_workspace_payloads` output for ready-to-submit workspace-creation JSON, and skip straight to `./scripts/create-child-workspaces.sh <CENTRAL_WORKSPACE_ID>` to create every child workspace in one pass. The manual steps below are for creating (or reviewing) one at a time.
 
 ### 2.1 — Switch to the child account
 
@@ -369,8 +373,13 @@ See [Enterprise IAM Action Control templates](https://cloud.ibm.com/docs/enterpr
 | `source_services` | `["logs-router","atracker"]` | No |
 | `target_service_name` | `logs` | No |
 | `authorization_roles` | `["Sender"]` | No |
+| `child_region_overrides` | `{"abc123": "eu-de"}` | No — per-account region for `child_workspace_variables`/`child_workspace_payloads`; defaults to `ibmcloud_region` |
+| `child_workspace_repo_url` | `https://github.com/YOUR_ORG/YOUR_REPO` | No — used in generated `child_workspace_payloads` |
+| `child_workspace_repo_branch` | `main` | No — used in generated `child_workspace_payloads` |
+| `child_workspace_name_prefix` | `child-logging-` | No — prefix for generated child workspace names |
+| `child_workspace_terraform_version` | `terraform_v1.5` | No — used in generated `child_workspace_payloads` |
 
-None of these are marked sensitive. A CRN, an instance GUID and an account ID are identifiers rather than credentials, and Terraform refuses to use sensitive values in `for_each` keys — which is exactly how the module iterates over child accounts.
+None of these are marked sensitive, except `child_workspace_payloads` itself (an output, not a variable — see below). A CRN, an instance GUID and an account ID are identifiers rather than credentials, and Terraform refuses to use sensitive values in `for_each` keys — which is exactly how the module iterates over child accounts.
 
 ### `child/` workspace
 

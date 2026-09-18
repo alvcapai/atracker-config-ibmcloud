@@ -231,6 +231,35 @@ locals {
   }
 }
 
+##############################################################################
+# Step 3b — Derive what each child/ workspace needs to be created with
+#
+# Feeds child_workspace_variables and child_workspace_payloads (outputs.tf),
+# which carry everything scripts/create-child-workspaces.sh needs to create
+# one child/ Schematics workspace per discovered child account.
+##############################################################################
+
+locals {
+  # A short, workspace-name-safe slug per child account: lower-cased account
+  # name (falling back to the account ID when the name is empty), anything
+  # outside [a-z0-9-] collapsed to "-", leading/trailing "-" trimmed, capped
+  # at 30 chars.
+  child_name_prefixes = {
+    for id, name in local.child_accounts : id => substr(
+      trim(
+        replace(lower(name != "" ? name : id), "/[^a-z0-9]+/", "-"),
+      "-"),
+    0, 30)
+  }
+
+  # Region used for logs_router_metadata_region / atracker_target_region in
+  # each child/ workspace: the per-account override if one was given,
+  # otherwise this workspace's own region.
+  child_regions = {
+    for id in keys(local.child_accounts) : id => lookup(var.child_region_overrides, id, var.ibmcloud_region)
+  }
+}
+
 # Warnings surfaced in the Schematics plan log rather than hard failures, so a
 # misconfigured filter is visible instead of silently producing nothing.
 check "child_accounts_resolved" {

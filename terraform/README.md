@@ -159,6 +159,11 @@ Re-running plan and apply is all it takes when a new account joins the enterpris
 
 Repeat for every child account. Each workspace is independent with its own Terraform state.
 
+**Fastest path — generate the values, or the workspaces themselves, from `central/`'s outputs:**
+
+- `child_workspace_variables` gives you `central_logs_crn`, `logs_router_metadata_region`, `atracker_target_region` and `name_prefix` per child account, ready to paste into the Console's **Retrieve input variables** form.
+- `child_workspace_payloads` gives you one ready-to-submit `ibmcloud schematics workspace new --file -` JSON payload per child account (sensitive — read it with `ibmcloud schematics output --id <CENTRAL_WORKSPACE_ID> --output json`). `scripts/create-child-workspaces.sh <CENTRAL_WORKSPACE_ID>` consumes this output directly and creates every missing child workspace for you.
+
 **Via IBM Cloud Console:**
 
 1. Go to **Schematics → Workspaces → Create workspace** (switch to the child account context).
@@ -252,6 +257,8 @@ See [Enterprise IAM Action Control templates](https://cloud.ibm.com/docs/enterpr
 | `excluded_accounts` | Account ID → reason it was skipped |
 | `authorizations_required` / `authorizations_required_count` | The full matrix, keyed `<account_id>/<source_service>`, with source, target and roles — available at plan time |
 | `authorization_ids` | `<account_id>/<source_service>` → IAM policy ID actually created |
+| `child_workspace_variables` | Per-child-account `central_logs_crn`, `logs_router_metadata_region`, `atracker_target_region`, `name_prefix` — plain text, readable straight from the plan log |
+| `child_workspace_payloads` | Per-child-account `ibmcloud schematics workspace new` JSON payload with those variables pre-filled (sensitive) — feed to `scripts/create-child-workspaces.sh` |
 | `logs_router_auth_ids` / `atracker_auth_ids` | Per-service views of the same, keyed by account ID |
 | `central_account_id` / `central_logs_instance_guid` | Parsed from `central_logs_crn`, to confirm the target |
 | `verification_commands` | Ready-to-paste commands to list what exists in the central account |

@@ -109,6 +109,48 @@ output "central_logs_instance_created" {
   value       = local.create_central_logs_instance
 }
 
+output "child_workspace_variables" {
+  description = "Per-child-account variable values for the child/ workspace (central_logs_crn, logs_router_metadata_region, atracker_target_region, name_prefix), keyed by account ID. Plain text so it is readable straight from the plan log; child_workspace_payloads below carries the same data as ready-to-submit Schematics workspace-creation JSON."
+  value = {
+    for id, name in local.child_accounts : id => {
+      account_name                = name
+      name_prefix                 = local.child_name_prefixes[id]
+      ibmcloud_region             = local.child_regions[id]
+      central_logs_crn            = local.central_logs_crn_resolved
+      logs_router_metadata_region = local.child_regions[id]
+      atracker_target_region      = local.child_regions[id]
+    }
+  }
+}
+
+output "child_workspace_payloads" {
+  description = "One Schematics 'workspace new' JSON payload per child account — pipe each into 'ibmcloud schematics workspace new --file -', or run scripts/create-child-workspaces.sh against this workspace's ID to create them all. Each element is a JSON-encoded string (decode with jq) whose template_data.variablestore pre-fills every child/ variable. Marked sensitive because central_logs_crn is embedded as plain JSON here even though it is passed through as a secure Schematics variable."
+  sensitive = true
+  value = [
+    for id, name in local.child_accounts : jsonencode({
+      name        = "${var.child_workspace_name_prefix}${local.child_name_prefixes[id]}"
+      type        = [var.child_workspace_terraform_version]
+      location    = local.child_regions[id]
+      description = "Deploys Logs Routing V3 and Activity Tracker enterprise-managed routes for child account ${id} (${name})."
+      template_repo = {
+        url    = var.child_workspace_repo_url
+        branch = var.child_workspace_repo_branch
+      }
+      template_data = [{
+        folder = "terraform/child"
+        type   = var.child_workspace_terraform_version
+        variablestore = [
+          { name = "ibmcloud_region", value = local.child_regions[id] },
+          { name = "central_logs_crn", value = local.central_logs_crn_resolved, secure = true },
+          { name = "logs_router_metadata_region", value = local.child_regions[id] },
+          { name = "atracker_target_region", value = local.child_regions[id] },
+          { name = "name_prefix", value = local.child_name_prefixes[id] },
+        ]
+      }]
+    })
+  ]
+}
+
 output "verification_commands" {
   description = "Commands to run in the central logging account after apply, to compare what exists against authorizations_required."
   value = [
