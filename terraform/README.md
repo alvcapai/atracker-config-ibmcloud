@@ -216,7 +216,7 @@ ibmcloud schematics apply --id <WORKSPACE_ID>
 
 ## Validation
 
-After applying each child workspace run the control-plane checks (in the child account):
+See [VALIDATION.md](../VALIDATION.md) for the full step-by-step validation runbook, including how to confirm log records actually arrive at the central instance. Quick control-plane checks (in the child account):
 
 ```bash
 # Activity Tracker

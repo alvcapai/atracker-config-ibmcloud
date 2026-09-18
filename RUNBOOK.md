@@ -298,7 +298,7 @@ ibmcloud schematics apply --id <WORKSPACE_ID> --force
 
 ## Step 3 — Validate
 
-Run these checks **inside each child account** after apply completes.
+Run these checks **inside each child account** after apply completes. See [VALIDATION.md](VALIDATION.md) for the full generic runbook (authorizations, routing resources, generating a test signal, and confirming arrival at the central instance).
 
 ### 3.1 — Control-plane checks
 
