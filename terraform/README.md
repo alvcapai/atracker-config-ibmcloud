@@ -79,9 +79,9 @@ Things worth knowing about the discovery:
 
 ## Prerequisites
 
-1. Provision the **IBM Cloud Logs instance** in the account that will hold the centralized logs. Record its **CRN** — `central/` derives both the instance GUID and the owning account ID from it.
+1. Provision the **IBM Cloud Logs instance** in the account that will hold the centralized logs, *or* let `central/` provision one itself (default behavior — see `create_central_logs_instance` below). If provisioning it yourself, record its **CRN** — `central/` derives both the instance GUID and the owning account ID from it.
 2. Ensure the **Schematics execution identity** (trusted profile or service ID) has:
-   - `central/` workspace: **Administrator** on IBM Cloud Logs (or on that instance) in the account the workspace runs in — required to create a cross-account authorization against it. To use auto-discovery, the same identity also needs enterprise access to list accounts (Enterprise Management service, Viewer or higher, assigned in the enterprise account). Without it, set `child_account_ids`.
+   - `central/` workspace: **Administrator** on IBM Cloud Logs (or on that instance) in the account the workspace runs in — required to create a cross-account authorization against it. To use auto-discovery, the same identity also needs enterprise access to list accounts (Enterprise Management service, Viewer or higher, assigned in the enterprise account). Without it, set `child_account_ids`. When `create_central_logs_instance` applies (the default), it also needs **Administrator** on IBM Cloud Logs and Resource Group / Object Storage access to provision the instance itself, and — when `configure_cos_archive` applies too (also the default) — **Administrator** on Cloud Object Storage to create the archive instance/bucket and the IAM authorization policy that lets Logs write to it.
    - `child/` workspace: IAM permission to manage Logs Routing and Activity Tracker resources in the child account.
 3. Store this Terraform source in a **Git repository** accessible to Schematics (GitHub, GitLab, Bitbucket, or IBM Cloud hosted Git).
 
@@ -110,6 +110,16 @@ Run it in the account that owns the central IBM Cloud Logs instance.
 | `excluded_account_ids` | *Optional.* Accounts you deliberately keep out — the central and management accounts are excluded automatically |
 
 If `central_logs_crn` and `central_logs_instance_id` are both left empty, `create_central_logs_instance` (default `true`) provisions a new IBM Cloud Logs instance in this account — named by `central_logs_instance_name`, on `central_logs_plan`, in `central_logs_resource_group_id` (default: the account's Default resource group) — and uses it as the authorization target. Set `create_central_logs_instance = false` to require an existing instance instead. The CRN used (supplied or newly created) is exposed as the `central_logs_crn` output for copying into every `child/` workspace.
+
+### COS log archive (only when this workspace creates the Logs instance)
+
+When `create_central_logs_instance` applies, `configure_cos_archive` (default `true`) additionally provisions a COS bucket and wires it into the new Logs instance as its archive target:
+
+1. A COS instance (`cos_instance_crn` if supplied, otherwise a new one via `cos_plan`/`cos_resource_group_id`) and a bucket in it (`cos_bucket_name` — auto-generated with a random suffix if left empty — `cos_bucket_region`, `cos_bucket_storage_class`).
+2. An `ibm_iam_authorization_policy` granting the `logs` service `Writer` access to exactly that bucket, plus a 30-second `time_sleep` before the Logs instance is created — the archive parameters are rejected if the authorization hasn't propagated yet, the same class of race fixed for `child/`'s Logs Routing resources.
+3. The Logs instance's `logs_bucket_crn` / `logs_bucket_endpoint` parameters, and `retention_period` set from `logs_retention_days` (one of `7`, `14`, `30`, `60`, `90` — default `30`).
+
+`retention_period` is how long ingested data stays searchable in the Logs service itself; once that many days pass, the data is retained only in the archive bucket. This can't be added to an already-existing Logs instance supplied via `central_logs_crn` — archive storage is only configurable at creation time — so in that case `configure_cos_archive` has no effect.
 
 6. Click **Save changes**, then **Generate plan**.
 7. Review `enterprise_accounts`, `child_accounts` and `authorizations_required` in the plan — confirm every expected child account is `included` and read `skipped_because` for the ones that are not.
@@ -261,6 +271,11 @@ See [Enterprise IAM Action Control templates](https://cloud.ibm.com/docs/enterpr
 | `child_workspace_payloads` | Per-child-account `ibmcloud schematics workspace new` JSON payload with those variables pre-filled (sensitive) — feed to `scripts/create-child-workspaces.sh` |
 | `logs_router_auth_ids` / `atracker_auth_ids` | Per-service views of the same, keyed by account ID |
 | `central_account_id` / `central_logs_instance_guid` | Parsed from `central_logs_crn`, to confirm the target |
+| `central_logs_instance_created` | Whether this apply provisioned a new Logs instance |
+| `cos_archive_configured` | Whether a COS log archive was wired into the Logs instance this apply created |
+| `cos_bucket_name` / `cos_bucket_crn` | The archive bucket, when `cos_archive_configured` is true |
+| `cos_instance_crn` / `cos_instance_created` | The COS instance holding that bucket, and whether it was created here |
+| `logs_retention_days` | Days data stays searchable in Cloud Logs before it is retained only in the COS archive |
 | `verification_commands` | Ready-to-paste commands to list what exists in the central account |
 
 ---

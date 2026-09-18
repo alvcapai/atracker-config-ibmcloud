@@ -364,6 +364,14 @@ See [Enterprise IAM Action Control templates](https://cloud.ibm.com/docs/enterpr
 | `central_logs_plan` | `standard` | No — only used when auto-creating |
 | `central_logs_resource_group_id` | `abc123...` | No — only used when auto-creating; defaults to the account's Default resource group |
 | `central_logs_service_endpoints` | `public` | No — only used when auto-creating |
+| `logs_retention_days` | `30` | No — default `30`; one of 7, 14, 30, 60, 90. Only used when auto-creating |
+| `configure_cos_archive` | `true` | No — default `true`; attaches a COS archive bucket when auto-creating the Logs instance |
+| `cos_instance_crn` | `crn:v1:bluemix:public:cloud-object-storage:global:a/ACCT:GUID::` | No — leave empty to auto-create a COS instance |
+| `cos_plan` | `standard` | No — only used when auto-creating the COS instance |
+| `cos_resource_group_id` | `abc123...` | No — only used when auto-creating the COS instance; defaults to the Logs instance's resource group |
+| `cos_bucket_name` | `central-logging-archive-a1b2c3` | No — leave empty to auto-generate a globally-unique name |
+| `cos_bucket_region` | `us-south` | No — defaults to `ibmcloud_region` |
+| `cos_bucket_storage_class` | `standard` | No — one of standard, vault, cold, smart |
 | `child_account_ids` | `["abc123","def456"]` | Layout B only — turns discovery off |
 | `enterprise_name` | `My Enterprise` | No — extra scoping filter |
 | `discover_child_accounts` | `true` | No |

@@ -109,6 +109,36 @@ output "central_logs_instance_created" {
   value       = local.create_central_logs_instance
 }
 
+output "cos_archive_configured" {
+  description = "Whether a COS log archive was configured on the central Logs instance this apply created. False when an existing Logs instance was supplied (archiving can only be set at creation time) or configure_cos_archive is false."
+  value       = local.configure_cos_archive
+}
+
+output "cos_bucket_name" {
+  description = "Name of the COS bucket configured as the log archive. Empty when cos_archive_configured is false."
+  value       = local.configure_cos_archive ? local.cos_bucket_name_resolved : ""
+}
+
+output "cos_bucket_crn" {
+  description = "CRN of the COS bucket configured as the log archive. Empty when cos_archive_configured is false."
+  value       = local.configure_cos_archive ? ibm_cos_bucket.central_logs_archive[0].crn : ""
+}
+
+output "cos_instance_crn" {
+  description = "CRN of the COS instance holding the log archive bucket — either the one supplied via cos_instance_crn, or the one this workspace just created. Empty when cos_archive_configured is false."
+  value       = local.configure_cos_archive ? local.cos_instance_crn_resolved : ""
+}
+
+output "cos_instance_created" {
+  description = "Whether this apply provisioned a new COS instance because cos_instance_crn was not supplied."
+  value       = local.create_cos_instance
+}
+
+output "logs_retention_days" {
+  description = "Days ingested data stays searchable in IBM Cloud Logs before it is retained only in the archive COS bucket. Only meaningful when this workspace created the Logs instance."
+  value       = var.logs_retention_days
+}
+
 output "child_workspace_variables" {
   description = "Per-child-account variable values for the child/ workspace (central_logs_crn, logs_router_metadata_region, atracker_target_region, name_prefix), keyed by account ID. Plain text so it is readable straight from the plan log; child_workspace_payloads below carries the same data as ready-to-submit Schematics workspace-creation JSON."
   value = {

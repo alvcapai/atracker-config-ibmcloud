@@ -86,6 +86,71 @@ variable "central_logs_service_endpoints" {
   }
 }
 
+variable "logs_retention_days" {
+  description = "Days IBM Cloud Logs keeps ingested data searchable ('hot' / Priority insights) before it is retained only in the archive COS bucket — logs older than this are effectively available only via COS. Only applied when create_central_logs_instance applies. Must be one of the values IBM Cloud Logs accepts: 7, 14, 30, 60, 90."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = contains([7, 14, 30, 60, 90], var.logs_retention_days)
+    error_message = "logs_retention_days must be one of: 7, 14, 30, 60, 90."
+  }
+}
+
+##############################################################################
+# COS archive — used only when create_central_logs_instance applies. Archive
+# storage can only be configured at Logs-instance creation time, so this has
+# no effect when an existing central_logs_crn / central_logs_instance_id was
+# supplied instead.
+##############################################################################
+
+variable "configure_cos_archive" {
+  description = "Attach a COS bucket as the log archive when this workspace creates the central IBM Cloud Logs instance. Set to false to create the Logs instance without archiving."
+  type        = bool
+  default     = true
+}
+
+variable "cos_instance_crn" {
+  description = "CRN of an existing IBM Cloud Object Storage instance to hold the log archive bucket. Leave empty to have this workspace provision a new COS instance."
+  type        = string
+  default     = ""
+}
+
+variable "cos_plan" {
+  description = "Plan for the COS instance created when cos_instance_crn is not supplied. Ignored when an existing COS instance is supplied."
+  type        = string
+  default     = "standard"
+}
+
+variable "cos_resource_group_id" {
+  description = "Resource group ID for the COS instance created when cos_instance_crn is not supplied. Leave empty to use the same resource group as the central Logs instance. Ignored when an existing COS instance is supplied."
+  type        = string
+  default     = ""
+}
+
+variable "cos_bucket_name" {
+  description = "Name of the COS bucket used as the log archive. Bucket names are globally unique across all of IBM Cloud. Leave empty to generate one automatically (a random suffix is appended to guarantee uniqueness)."
+  type        = string
+  default     = ""
+}
+
+variable "cos_bucket_region" {
+  description = "Region for the log archive COS bucket (a regional bucket). Leave empty to use ibmcloud_region."
+  type        = string
+  default     = ""
+}
+
+variable "cos_bucket_storage_class" {
+  description = "Storage class for the log archive COS bucket."
+  type        = string
+  default     = "standard"
+
+  validation {
+    condition     = contains(["standard", "vault", "cold", "smart"], var.cos_bucket_storage_class)
+    error_message = "cos_bucket_storage_class must be one of: standard, vault, cold, smart."
+  }
+}
+
 variable "target_service_name" {
   description = "Target service of the authorizations. Keep the default 'logs' for IBM Cloud Logs. Change it only if you reuse this module for another centralized destination, e.g. 'sysdig-monitor' for IBM Cloud Monitoring with metrics-router as the source service."
   type        = string

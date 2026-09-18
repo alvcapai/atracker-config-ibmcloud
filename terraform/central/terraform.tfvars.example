@@ -61,6 +61,32 @@ central_logs_crn = "crn:v1:bluemix:public:logs:us-south:a/REPLACE_ACCOUNT_ID:REP
 # central_logs_resource_group_id = ""  # empty = account's Default resource group
 # central_logs_service_endpoints = "public"
 
+# Days data stays searchable in Cloud Logs itself before it is retained only
+# in the COS archive below. Must be one of: 7, 14, 30, 60, 90.
+# logs_retention_days = 30
+
+##############################################################################
+# COS archive — only used when create_central_logs_instance applies (archive
+# storage can only be configured when the Logs instance is created, not
+# retrofitted onto an existing one).
+##############################################################################
+
+# Set to false to create the Logs instance without a COS archive.
+# configure_cos_archive = true
+
+# Full CRN of an EXISTING COS instance to hold the archive bucket. Leave
+# empty to have this workspace provision a new COS instance.
+# cos_instance_crn = "crn:v1:bluemix:public:cloud-object-storage:global:a/REPLACE_ACCOUNT_ID:REPLACE_COS_INSTANCE_GUID::"
+
+# cos_plan               = "standard"
+# cos_resource_group_id  = ""  # empty = same resource group as the Logs instance
+
+# Bucket name must be globally unique across all of IBM Cloud. Leave empty to
+# generate one automatically (random suffix appended).
+# cos_bucket_name          = ""
+# cos_bucket_region        = ""  # empty = ibmcloud_region
+# cos_bucket_storage_class = "standard"
+
 ##############################################################################
 # Rarely changed
 ##############################################################################

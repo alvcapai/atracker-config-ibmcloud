@@ -46,6 +46,14 @@ terraform {
       source  = "IBM-Cloud/ibm"
       version = ">= 1.66"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = ">= 3.5"
+    }
+    time = {
+      source  = "hashicorp/time"
+      version = ">= 0.9"
+    }
   }
 }
 
@@ -91,19 +99,154 @@ data "ibm_resource_group" "central_logs" {
   is_default = true
 }
 
+locals {
+  central_logs_resource_group_id_resolved = (
+    var.central_logs_resource_group_id != "" ? var.central_logs_resource_group_id :
+    local.create_central_logs_instance ? data.ibm_resource_group.central_logs[0].id : ""
+  )
+}
+
+##############################################################################
+# Step 1a — COS archive for the central IBM Cloud Logs instance
+#
+# Only applies when this workspace creates the central Logs instance itself
+# (local.create_central_logs_instance): archive storage is configured via
+# ibm_resource_instance.central_logs's "parameters" at creation time, so it
+# cannot be retrofitted onto an existing instance supplied via
+# central_logs_crn / central_logs_instance_id.
+#
+# Mirrors the pattern IBM's own terraform-ibm-observability-instances module
+# uses: create (or reuse) a COS instance and bucket, grant the "logs" service
+# Writer access to that specific bucket, and pause after granting it — IAM
+# policy propagation is not instant, and the Logs instance create call fails
+# outright if the authorization isn't yet effective (the same class of race
+# already hit in child/ between logs_router_settings and logs_router_target).
+##############################################################################
+
+locals {
+  configure_cos_archive    = var.configure_cos_archive && local.create_central_logs_instance
+  create_cos_instance      = local.configure_cos_archive && var.cos_instance_crn == ""
+  generate_cos_bucket_name = local.configure_cos_archive && var.cos_bucket_name == ""
+
+  cos_resource_group_id_resolved = (
+    var.cos_resource_group_id != "" ? var.cos_resource_group_id : local.central_logs_resource_group_id_resolved
+  )
+  cos_bucket_region_resolved = var.cos_bucket_region != "" ? var.cos_bucket_region : var.ibmcloud_region
+
+  cos_instance_crn_resolved = (
+    var.cos_instance_crn != "" ? var.cos_instance_crn :
+    local.create_cos_instance ? ibm_resource_instance.cos[0].id : ""
+  )
+
+  # COS bucket names are globally unique across all of IBM Cloud, so a
+  # generated default gets a random suffix rather than relying on the
+  # instance name alone.
+  cos_bucket_name_resolved = (
+    var.cos_bucket_name != "" ? var.cos_bucket_name :
+    local.generate_cos_bucket_name ? "${substr(replace(lower(var.central_logs_instance_name), "/[^a-z0-9-]+/", "-"), 0, 30)}-archive-${random_string.cos_bucket_suffix[0].result}" : ""
+  )
+
+  # The Logs instance's own service-endpoints choice decides which S3
+  # endpoint of the bucket it should archive through.
+  cos_bucket_endpoint_resolved = local.configure_cos_archive ? (
+    var.central_logs_service_endpoints == "private" ? ibm_cos_bucket.central_logs_archive[0].s3_endpoint_private : ibm_cos_bucket.central_logs_archive[0].s3_endpoint_public
+  ) : ""
+}
+
+resource "random_string" "cos_bucket_suffix" {
+  count   = local.generate_cos_bucket_name ? 1 : 0
+  length  = 6
+  lower   = true
+  upper   = false
+  numeric = true
+  special = false
+}
+
+# Created only when configuring an archive and no existing COS instance was
+# supplied via cos_instance_crn.
+resource "ibm_resource_instance" "cos" {
+  count             = local.create_cos_instance ? 1 : 0
+  name              = "${var.central_logs_instance_name}-cos"
+  service           = "cloud-object-storage"
+  plan              = var.cos_plan
+  location          = "global"
+  resource_group_id = local.cos_resource_group_id_resolved
+}
+
+resource "ibm_cos_bucket" "central_logs_archive" {
+  count                = local.configure_cos_archive ? 1 : 0
+  bucket_name          = local.cos_bucket_name_resolved
+  resource_instance_id = local.cos_instance_crn_resolved
+  region_location      = local.cos_bucket_region_resolved
+  storage_class        = var.cos_bucket_storage_class
+}
+
+# Scoped to exactly this bucket (not the whole COS instance) via
+# resourceType/resource, and to Logs instances in the same resource group the
+# central Logs instance is created in.
+resource "ibm_iam_authorization_policy" "logs_to_cos_archive" {
+  count                    = local.configure_cos_archive ? 1 : 0
+  source_service_name      = "logs"
+  source_resource_group_id = local.central_logs_resource_group_id_resolved
+  roles                    = ["Writer"]
+  description              = "Allow the central IBM Cloud Logs instance to archive ingested log data to its COS bucket. Managed by Terraform."
+
+  resource_attributes {
+    name     = "serviceName"
+    operator = "stringEquals"
+    value    = "cloud-object-storage"
+  }
+
+  resource_attributes {
+    name     = "accountId"
+    operator = "stringEquals"
+    value    = local.central_account_id
+  }
+
+  resource_attributes {
+    name     = "serviceInstance"
+    operator = "stringEquals"
+    value    = regex(".*:(.*):bucket:.*", ibm_cos_bucket.central_logs_archive[0].crn)[0]
+  }
+
+  resource_attributes {
+    name     = "resourceType"
+    operator = "stringEquals"
+    value    = "bucket"
+  }
+
+  resource_attributes {
+    name     = "resource"
+    operator = "stringEquals"
+    value    = regex("bucket:(.*)", ibm_cos_bucket.central_logs_archive[0].crn)[0]
+  }
+}
+
+# IAM authorization policies are not instant — the Logs instance's create
+# call fails if it runs before this one has propagated.
+resource "time_sleep" "wait_for_cos_authorization_policy" {
+  count           = local.configure_cos_archive ? 1 : 0
+  depends_on      = [ibm_iam_authorization_policy.logs_to_cos_archive]
+  create_duration = "30s"
+}
+
 # Created only when no existing central Logs instance was supplied. Runs in
 # this workspace's own account, which is exactly the account the central
 # instance must live in.
 resource "ibm_resource_instance" "central_logs" {
   count             = local.create_central_logs_instance ? 1 : 0
+  depends_on        = [time_sleep.wait_for_cos_authorization_policy]
   name              = var.central_logs_instance_name
   service           = "logs"
   plan              = var.central_logs_plan
   location          = var.ibmcloud_region
-  resource_group_id = var.central_logs_resource_group_id != "" ? var.central_logs_resource_group_id : data.ibm_resource_group.central_logs[0].id
+  resource_group_id = local.central_logs_resource_group_id_resolved
 
   parameters = {
-    service-endpoints = var.central_logs_service_endpoints
+    service-endpoints    = var.central_logs_service_endpoints
+    retention_period     = var.logs_retention_days
+    logs_bucket_crn      = local.configure_cos_archive ? ibm_cos_bucket.central_logs_archive[0].crn : null
+    logs_bucket_endpoint = local.configure_cos_archive ? local.cos_bucket_endpoint_resolved : null
   }
 }
 
