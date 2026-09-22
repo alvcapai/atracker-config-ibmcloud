@@ -48,7 +48,7 @@ variable "logs_resource_group_id" {
 variable "logs_service_endpoints" {
   description = "Service endpoints for the IBM Cloud Logs instance: public, private, or public-and-private. Must match the type of endpoint used in central_cos_bucket_endpoint."
   type        = string
-  default     = "public"
+  default     = "private"
 
   validation {
     condition     = contains(["public", "private", "public-and-private"], var.logs_service_endpoints)

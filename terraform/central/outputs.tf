@@ -114,7 +114,7 @@ output "child_workspace_variables" {
       name_prefix                 = local.child_name_prefixes[id]
       ibmcloud_region             = local.child_regions[id]
       central_cos_bucket_crn      = ibm_cos_bucket.central_archive.crn
-      central_cos_bucket_endpoint = ibm_cos_bucket.central_archive.s3_endpoint_public
+      central_cos_bucket_endpoint = ibm_cos_bucket.central_archive.s3_endpoint_private
       logs_router_metadata_region = local.child_regions[id]
       atracker_target_region      = local.child_regions[id]
     }
@@ -140,7 +140,7 @@ output "child_workspace_payloads" {
         variablestore = [
           { name = "ibmcloud_region", value = local.child_regions[id] },
           { name = "central_cos_bucket_crn", value = ibm_cos_bucket.central_archive.crn, secure = true },
-          { name = "central_cos_bucket_endpoint", value = ibm_cos_bucket.central_archive.s3_endpoint_public },
+          { name = "central_cos_bucket_endpoint", value = ibm_cos_bucket.central_archive.s3_endpoint_private },
           { name = "logs_router_metadata_region", value = local.child_regions[id] },
           { name = "atracker_target_region", value = local.child_regions[id] },
           { name = "name_prefix", value = local.child_name_prefixes[id] },
