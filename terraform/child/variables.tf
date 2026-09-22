@@ -14,11 +14,62 @@ variable "ibmcloud_region" {
   default     = "us-south"
 }
 
-variable "central_logs_crn" {
-  description = "Full CRN of the IBM Cloud Logs instance in the centralized Logging Account. Used as the destination for both Logs Routing and Activity Tracker."
+##############################################################################
+# Central COS archive — supplied from the central/ workspace outputs
+##############################################################################
+
+variable "central_cos_bucket_crn" {
+  description = "CRN of the central COS bucket where this child account's IBM Cloud Logs instance will archive data after the hot-retention window. Copy this from the central/ workspace's cos_bucket_crn output."
   type        = string
   sensitive   = true
 }
+
+variable "central_cos_bucket_endpoint" {
+  description = "S3 endpoint of the central COS bucket (public or private depending on logs_service_endpoints). Copy this from the central/ workspace's cos_bucket_s3_endpoint_public or cos_bucket_s3_endpoint_private output."
+  type        = string
+}
+
+##############################################################################
+# Local IBM Cloud Logs instance
+##############################################################################
+
+variable "logs_plan" {
+  description = "Plan for the IBM Cloud Logs instance created in this child account."
+  type        = string
+  default     = "standard"
+}
+
+variable "logs_resource_group_id" {
+  description = "Resource group ID for the IBM Cloud Logs instance. Leave empty to use the account's Default resource group."
+  type        = string
+  default     = ""
+}
+
+variable "logs_service_endpoints" {
+  description = "Service endpoints for the IBM Cloud Logs instance: public, private, or public-and-private. Must match the type of endpoint used in central_cos_bucket_endpoint."
+  type        = string
+  default     = "public"
+
+  validation {
+    condition     = contains(["public", "private", "public-and-private"], var.logs_service_endpoints)
+    error_message = "logs_service_endpoints must be one of: public, private, public-and-private."
+  }
+}
+
+variable "logs_retention_days" {
+  description = "Days this child account's IBM Cloud Logs instance keeps ingested data searchable ('hot') before archiving it to the central COS bucket. Must be one of the values IBM Cloud Logs accepts: 7, 14, 30, 60, 90."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = contains([7, 14, 30, 60, 90], var.logs_retention_days)
+    error_message = "logs_retention_days must be one of: 7, 14, 30, 60, 90."
+  }
+}
+
+##############################################################################
+# Routing configuration
+##############################################################################
 
 variable "logs_router_metadata_region" {
   description = "Primary metadata region for IBM Cloud Logs Routing V3 (e.g. us-south). Controls where Logs Routing route metadata is stored."
@@ -31,6 +82,6 @@ variable "atracker_target_region" {
 }
 
 variable "name_prefix" {
-  description = "Short prefix used in Activity Tracker resource names to identify this child account (e.g. prod-us-south). Must be unique per child workspace."
+  description = "Short prefix used in resource names to identify this child account (e.g. prod-us-south). Must be unique per child workspace."
   type        = string
 }

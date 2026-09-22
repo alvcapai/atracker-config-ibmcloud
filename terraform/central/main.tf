@@ -1,31 +1,33 @@
 ##############################################################################
-# Central Logging Account — cross-account S2S authorizations
+# Central Logging Account — COS bucket + cross-account S2S authorizations
 #
-# Run this workspace FIRST so every child account has the required
-# logs-router → IBM Cloud Logs and atracker → IBM Cloud Logs "Sender"
-# authorization before the child routes are applied.
+# Run this workspace FIRST. It provisions (or reuses) a COS instance and
+# bucket in the central account, then grants each child account's IBM Cloud
+# Logs service "Writer" access to that bucket so each child's Logs instance
+# can archive its data here after 30 days.
+#
+# Architecture
+#   - Central account: COS instance + bucket only. No Cloud Logs here.
+#   - Child accounts: local Cloud Logs instance (30-day hot retention) whose
+#     archive is pointed at this bucket. logs-router and atracker route into
+#     the local Cloud Logs instance, not into the central account.
 #
 # What it does
-#   1. Resolves the authorization target: an existing IBM Cloud Logs instance
-#      given via central_logs_crn / central_logs_instance_id, or — when
-#      neither is supplied and create_central_logs_instance is true (the
-#      default) — a brand new instance this workspace provisions itself.
-#   2. Lists every account of the IBM Cloud Enterprise (Enterprise Management
-#      ListAccounts API) — or uses the explicit list in var.child_account_ids
-#      when the workspace identity has no enterprise access.
-#   3. Filters that list: drops the enterprise management account, the central
-#      logging account itself, anything in var.excluded_account_ids and any
-#      account whose state is not in var.included_account_states.
-#   4. Creates one IAM authorization policy per (child account × source
-#      service) pair, all targeting the central IBM Cloud Logs instance.
-#   5. Reports the full decision table through outputs, so the plan itself is
-#      the inventory of "authorizations needed vs. authorizations created".
+#   1. Creates (or reuses) a COS instance and bucket in this account.
+#   2. Lists every account of the IBM Cloud Enterprise — or uses the explicit
+#      list in var.child_account_ids when enterprise access is unavailable.
+#   3. Filters that list: drops the management account, the central account
+#      itself, anything in var.excluded_account_ids, and accounts whose state
+#      is not in var.included_account_states.
+#   4. Creates one cross-account IAM authorization policy per child account,
+#      granting that account's "logs" service Writer access to the central
+#      COS bucket so the child's Cloud Logs instance can archive to it.
+#   5. Reports the full decision table through outputs.
 #
 # Where each authorization lives
-#   Cross-account service-to-service authorizations are created in the account
-#   that owns the TARGET resource — i.e. this workspace must run in the account
-#   that holds the central IBM Cloud Logs instance. See:
-#   https://cloud.ibm.com/docs/logs-router?topic=logs-router-enterprise-routing-scenario
+#   Cross-account S2S authorizations must be created in the account that owns
+#   the TARGET resource — i.e. this workspace must run in the central account
+#   that holds the COS bucket.
 #
 # Schematics notes:
 #   - No backend block: Schematics manages state internally per workspace.
@@ -50,10 +52,6 @@ terraform {
       source  = "hashicorp/random"
       version = ">= 3.5"
     }
-    time = {
-      source  = "hashicorp/time"
-      version = ">= 0.9"
-    }
   }
 }
 
@@ -64,93 +62,49 @@ provider "ibm" {
 }
 
 ##############################################################################
-# Step 1 — Resolve the authorization target (instance GUID + owning account)
+# Step 1 — Resolve the central account ID and COS resources
 #
-# central_logs_crn is the preferred input. Its shape is:
-#   crn:v1:bluemix:public:logs:<region>:a/<account_id>:<instance_guid>::
-#    0  1    2       3      4     5        6                7        8 9
+# The central account ID is needed to:
+#   a) exclude the central account from child discovery, and
+#   b) scope the bucket-level authorization policies.
 #
-# When neither central_logs_crn nor central_logs_instance_id is supplied and
-# var.create_central_logs_instance is true (the default), this workspace
-# provisions a new IBM Cloud Logs instance itself and uses it as the
-# authorization target, so deployment can proceed without a pre-existing one.
+# It can be provided explicitly (central_account_id), derived from an existing
+# COS instance CRN (cos_instance_crn), or read from the default resource group
+# data source when this workspace creates the COS instance itself.
 ##############################################################################
 
 locals {
-  input_crn_parts  = var.central_logs_crn == "" ? [] : split(":", var.central_logs_crn)
-  input_crn_usable = length(local.input_crn_parts) >= 8
+  cos_crn_parts     = var.cos_instance_crn == "" ? [] : split(":", var.cos_instance_crn)
+  cos_crn_is_usable = length(local.cos_crn_parts) >= 8
 
-  # An existing instance was supplied, either as a CRN or a bare GUID.
-  existing_instance_supplied = local.input_crn_usable || var.central_logs_instance_id != ""
+  create_cos_instance      = var.cos_instance_crn == ""
+  generate_cos_bucket_name = var.cos_bucket_name == ""
 
-  create_central_logs_instance = var.create_central_logs_instance && !local.existing_instance_supplied
+  cos_bucket_region_resolved = var.cos_bucket_region != "" ? var.cos_bucket_region : var.ibmcloud_region
 }
 
-# Always read the account's default resource group when creating a new
-# instance — both to resolve resource_group_id when the caller did not
-# supply one, and to read the account ID up front. A data source is read at
-# plan time (unlike a resource's computed attributes, which are only known
-# after apply), which keeps central_account_id — and therefore the for_each
-# keys on local.authorizations, which are filtered by it — known during
-# plan instead of depending on the instance this same apply is about to
-# create.
-data "ibm_resource_group" "central_logs" {
-  count      = local.create_central_logs_instance ? 1 : 0
+# Read the default resource group when creating COS ourselves — both to
+# resolve the resource group ID and to obtain the account ID at plan time
+# (needed for for_each key filtering, which must be known before apply).
+data "ibm_resource_group" "central" {
+  count      = local.create_cos_instance ? 1 : 0
   is_default = true
 }
 
 locals {
-  central_logs_resource_group_id_resolved = (
-    var.central_logs_resource_group_id != "" ? var.central_logs_resource_group_id :
-    local.create_central_logs_instance ? data.ibm_resource_group.central_logs[0].id : ""
-  )
-}
-
-##############################################################################
-# Step 1a — COS archive for the central IBM Cloud Logs instance
-#
-# Only applies when this workspace creates the central Logs instance itself
-# (local.create_central_logs_instance): archive storage is configured via
-# ibm_resource_instance.central_logs's "parameters" at creation time, so it
-# cannot be retrofitted onto an existing instance supplied via
-# central_logs_crn / central_logs_instance_id.
-#
-# Mirrors the pattern IBM's own terraform-ibm-observability-instances module
-# uses: create (or reuse) a COS instance and bucket, grant the "logs" service
-# Writer access to that specific bucket, and pause after granting it — IAM
-# policy propagation is not instant, and the Logs instance create call fails
-# outright if the authorization isn't yet effective (the same class of race
-# already hit in child/ between logs_router_settings and logs_router_target).
-##############################################################################
-
-locals {
-  configure_cos_archive    = var.configure_cos_archive && local.create_central_logs_instance
-  create_cos_instance      = local.configure_cos_archive && var.cos_instance_crn == ""
-  generate_cos_bucket_name = local.configure_cos_archive && var.cos_bucket_name == ""
-
   cos_resource_group_id_resolved = (
-    var.cos_resource_group_id != "" ? var.cos_resource_group_id : local.central_logs_resource_group_id_resolved
-  )
-  cos_bucket_region_resolved = var.cos_bucket_region != "" ? var.cos_bucket_region : var.ibmcloud_region
-
-  cos_instance_crn_resolved = (
-    var.cos_instance_crn != "" ? var.cos_instance_crn :
-    local.create_cos_instance ? ibm_resource_instance.cos[0].id : ""
+    var.cos_resource_group_id != "" ? var.cos_resource_group_id :
+    local.create_cos_instance ? data.ibm_resource_group.central[0].id : ""
   )
 
-  # COS bucket names are globally unique across all of IBM Cloud, so a
-  # generated default gets a random suffix rather than relying on the
-  # instance name alone.
-  cos_bucket_name_resolved = (
-    var.cos_bucket_name != "" ? var.cos_bucket_name :
-    local.generate_cos_bucket_name ? "${substr(replace(lower(var.central_logs_instance_name), "/[^a-z0-9-]+/", "-"), 0, 30)}-archive-${random_string.cos_bucket_suffix[0].result}" : ""
+  # The account that owns the COS bucket — i.e. the account this workspace
+  # runs in. Excluded from child discovery so the central account never
+  # tries to authorize itself.
+  central_account_id = (
+    var.central_account_id != "" ? var.central_account_id :
+    local.cos_crn_is_usable ? trimprefix(local.cos_crn_parts[6], "a/") :
+    local.create_cos_instance ? data.ibm_resource_group.central[0].account_id : ""
   )
-
-  # The Logs instance's own service-endpoints choice decides which S3
-  # endpoint of the bucket it should archive through.
-  cos_bucket_endpoint_resolved = local.configure_cos_archive ? (
-    var.central_logs_service_endpoints == "private" ? ibm_cos_bucket.central_logs_archive[0].s3_endpoint_private : ibm_cos_bucket.central_logs_archive[0].s3_endpoint_public
-  ) : ""
 }
 
 resource "random_string" "cos_bucket_suffix" {
@@ -162,134 +116,51 @@ resource "random_string" "cos_bucket_suffix" {
   special = false
 }
 
-# Created only when configuring an archive and no existing COS instance was
-# supplied via cos_instance_crn.
+# Created only when no existing COS instance was supplied via cos_instance_crn.
 resource "ibm_resource_instance" "cos" {
   count             = local.create_cos_instance ? 1 : 0
-  name              = "${var.central_logs_instance_name}-cos"
+  name              = var.cos_instance_name
   service           = "cloud-object-storage"
   plan              = var.cos_plan
   location          = "global"
   resource_group_id = local.cos_resource_group_id_resolved
 }
 
-resource "ibm_cos_bucket" "central_logs_archive" {
-  count                = local.configure_cos_archive ? 1 : 0
+locals {
+  cos_instance_crn_resolved = (
+    var.cos_instance_crn != "" ? var.cos_instance_crn :
+    local.create_cos_instance ? ibm_resource_instance.cos[0].id : ""
+  )
+
+  # COS bucket names are globally unique across all of IBM Cloud.
+  cos_bucket_name_resolved = (
+    var.cos_bucket_name != "" ? var.cos_bucket_name :
+    local.generate_cos_bucket_name ? "${substr(replace(lower(var.cos_instance_name), "/[^a-z0-9-]+/", "-"), 0, 30)}-logs-archive-${random_string.cos_bucket_suffix[0].result}" : ""
+  )
+}
+
+resource "ibm_cos_bucket" "central_archive" {
   bucket_name          = local.cos_bucket_name_resolved
   resource_instance_id = local.cos_instance_crn_resolved
   region_location      = local.cos_bucket_region_resolved
   storage_class        = var.cos_bucket_storage_class
-}
 
-# Scoped to exactly this bucket (not the whole COS instance) via
-# resourceType/resource, and to Logs instances in the same resource group the
-# central Logs instance is created in.
-resource "ibm_iam_authorization_policy" "logs_to_cos_archive" {
-  count                    = local.configure_cos_archive ? 1 : 0
-  source_service_name      = "logs"
-  source_resource_group_id = local.central_logs_resource_group_id_resolved
-  roles                    = ["Writer"]
-  description              = "Allow the central IBM Cloud Logs instance to archive ingested log data to its COS bucket. Managed by Terraform."
-
-  resource_attributes {
-    name     = "serviceName"
-    operator = "stringEquals"
-    value    = "cloud-object-storage"
+  # Lifecycle rule: transition objects to a cheaper tier after 30 days.
+  # The child Cloud Logs instance archives data here; older objects are
+  # not frequently accessed and can move to vault/cold storage.
+  dynamic "archive_rule" {
+    for_each = var.cos_archive_days > 0 ? [1] : []
+    content {
+      rule_id = "logs-archive-transition"
+      enable  = true
+      days    = var.cos_archive_days
+      type    = var.cos_archive_type
+    }
   }
-
-  resource_attributes {
-    name     = "accountId"
-    operator = "stringEquals"
-    value    = local.central_account_id
-  }
-
-  resource_attributes {
-    name     = "serviceInstance"
-    operator = "stringEquals"
-    value    = regex(".*:(.*):bucket:.*", ibm_cos_bucket.central_logs_archive[0].crn)[0]
-  }
-
-  resource_attributes {
-    name     = "resourceType"
-    operator = "stringEquals"
-    value    = "bucket"
-  }
-
-  resource_attributes {
-    name     = "resource"
-    operator = "stringEquals"
-    value    = regex("bucket:(.*)", ibm_cos_bucket.central_logs_archive[0].crn)[0]
-  }
-}
-
-# IAM authorization policies are not instant — the Logs instance's create
-# call fails if it runs before this one has propagated.
-resource "time_sleep" "wait_for_cos_authorization_policy" {
-  count           = local.configure_cos_archive ? 1 : 0
-  depends_on      = [ibm_iam_authorization_policy.logs_to_cos_archive]
-  create_duration = "30s"
-}
-
-# Created only when no existing central Logs instance was supplied. Runs in
-# this workspace's own account, which is exactly the account the central
-# instance must live in.
-resource "ibm_resource_instance" "central_logs" {
-  count             = local.create_central_logs_instance ? 1 : 0
-  depends_on        = [time_sleep.wait_for_cos_authorization_policy]
-  name              = var.central_logs_instance_name
-  service           = "logs"
-  plan              = var.central_logs_plan
-  location          = var.ibmcloud_region
-  resource_group_id = local.central_logs_resource_group_id_resolved
-
-  parameters = {
-    service-endpoints    = var.central_logs_service_endpoints
-    retention_period     = var.logs_retention_days
-    logs_bucket_crn      = local.configure_cos_archive ? ibm_cos_bucket.central_logs_archive[0].crn : null
-    logs_bucket_endpoint = local.configure_cos_archive ? local.cos_bucket_endpoint_resolved : null
-  }
-}
-
-locals {
-  # GUID of the central IBM Cloud Logs instance (the authorization target).
-  # Only used as a resource attribute (never a for_each key), so it is fine
-  # for this to stay unknown until the new instance is actually created.
-  central_logs_instance_guid = (
-    var.central_logs_instance_id != "" ? var.central_logs_instance_id :
-    local.input_crn_usable ? local.input_crn_parts[7] :
-    local.create_central_logs_instance ? ibm_resource_instance.central_logs[0].guid : ""
-  )
-
-  # Account that owns the target instance — i.e. the account this workspace
-  # runs in. It is excluded from discovery so the account never authorizes
-  # itself, and that exclusion drives a for_each key, so this must be known
-  # at plan time: from the supplied CRN/variable, or from the resource-group
-  # data source above — never from the not-yet-created instance's CRN.
-  central_account_id = (
-    var.central_account_id != "" ? var.central_account_id :
-    local.input_crn_usable ? trimprefix(local.input_crn_parts[6], "a/") :
-    local.create_central_logs_instance ? data.ibm_resource_group.central_logs[0].account_id : ""
-  )
-
-  # Full CRN to surface as an output, for copying into child/ workspaces.
-  central_logs_crn_resolved = (
-    local.input_crn_usable ? var.central_logs_crn :
-    local.create_central_logs_instance ? ibm_resource_instance.central_logs[0].crn : ""
-  )
 }
 
 ##############################################################################
 # Step 2 — Discover the enterprise child accounts
-#
-# ibm_enterprise_accounts takes NO enterprise_id argument. It calls the
-# Enterprise Management ListAccounts API unfiltered and returns every account
-# the workspace identity can see, including accounts nested inside account
-# groups. All scoping is therefore done locally, in step 3.
-#
-# The call only succeeds for an identity with enterprise access (normally an
-# identity in the enterprise/management account). If the workspace runs in a
-# plain child account, set var.child_account_ids instead and discovery is
-# skipped entirely — no enterprise API call is made.
 ##############################################################################
 
 locals {
@@ -315,7 +186,7 @@ data "ibm_enterprise_accounts" "all" {
 }
 
 ##############################################################################
-# Step 3 — Decide, per account, whether it needs the authorizations
+# Step 3 — Decide, per account, whether it needs the authorization
 ##############################################################################
 
 locals {
@@ -344,7 +215,7 @@ locals {
   skip_reason = {
     for a in local.accounts : a.id => (
       contains(var.excluded_account_ids, a.id) ? "listed in excluded_account_ids" :
-      (local.central_account_id != "" && a.id == local.central_account_id) ? "central logging account (owns the authorization target)" :
+      (local.central_account_id != "" && a.id == local.central_account_id) ? "central logging account (owns the COS archive bucket)" :
       (a.is_management && var.exclude_management_account) ? "enterprise management account" :
       (local.enterprise_id_filter != "" && a.enterprise_id != local.enterprise_id_filter) ? "not part of enterprise \"${var.enterprise_name}\"" :
       (length(local.allowed_states) > 0 && !contains(local.allowed_states, a.state)) ? "account state \"${a.state}\" not in included_account_states" :
@@ -361,32 +232,11 @@ locals {
   child_accounts = length(var.child_account_ids) > 0 ? {
     for id in var.child_account_ids : id => "supplied via child_account_ids"
   } : local.discovered_child_accounts
-
-  # The complete matrix of authorizations this enterprise needs:
-  # one entry per child account per source service.
-  authorizations = {
-    for pair in setproduct(keys(local.child_accounts), var.source_services) :
-    "${pair[0]}/${pair[1]}" => {
-      account_id     = pair[0]
-      account_name   = local.child_accounts[pair[0]]
-      source_service = pair[1]
-    }
-  }
 }
 
-##############################################################################
-# Step 3b — Derive what each child/ workspace needs to be created with
-#
-# Feeds child_workspace_variables and child_workspace_payloads (outputs.tf),
-# which carry everything scripts/create-child-workspaces.sh needs to create
-# one child/ Schematics workspace per discovered child account.
-##############################################################################
-
+# Derive workspace-generation helpers (feeds child_workspace_variables output).
 locals {
-  # A short, workspace-name-safe slug per child account: lower-cased account
-  # name (falling back to the account ID when the name is empty), anything
-  # outside [a-z0-9-] collapsed to "-", leading/trailing "-" trimmed, capped
-  # at 30 chars.
+  # A short, workspace-name-safe slug per child account.
   child_name_prefixes = {
     for id, name in local.child_accounts : id => substr(
       trim(
@@ -395,16 +245,13 @@ locals {
     0, 30)
   }
 
-  # Region used for logs_router_metadata_region / atracker_target_region in
-  # each child/ workspace: the per-account override if one was given,
-  # otherwise this workspace's own region.
+  # Region per child account (override map or this workspace's own region).
   child_regions = {
     for id in keys(local.child_accounts) : id => lookup(var.child_region_overrides, id, var.ibmcloud_region)
   }
 }
 
-# Warnings surfaced in the Schematics plan log rather than hard failures, so a
-# misconfigured filter is visible instead of silently producing nothing.
+# Soft warnings — visible in the plan log without blocking apply.
 check "child_accounts_resolved" {
   assert {
     condition     = length(local.child_accounts) > 0
@@ -412,49 +259,79 @@ check "child_accounts_resolved" {
   }
 }
 
-check "target_resolved" {
-  assert {
-    condition     = local.central_logs_instance_guid != ""
-    error_message = "No authorization target resolved and create_central_logs_instance is false. Set central_logs_crn (preferred — the account ID is derived from it), central_logs_instance_id, or leave create_central_logs_instance at its default (true) so this workspace provisions a new IBM Cloud Logs instance."
-  }
-}
-
 check "central_account_known" {
   assert {
     condition     = local.central_account_id != ""
-    error_message = "The central account ID is unknown, so the central logging account cannot be auto-excluded from discovery. Set central_logs_crn (preferred), central_account_id, or leave create_central_logs_instance at its default (true) so this workspace provisions a new instance and derives the account ID from it."
+    error_message = "The central account ID is unknown, so the central account cannot be auto-excluded from discovery. Set central_account_id, cos_instance_crn (the account ID is derived from it), or leave create_cos_instance at its default so this workspace derives it automatically."
+  }
+}
+
+check "cos_bucket_ready" {
+  assert {
+    condition     = local.cos_bucket_name_resolved != ""
+    error_message = "COS bucket name could not be resolved. Either supply cos_bucket_name or let this workspace create the bucket."
   }
 }
 
 ##############################################################################
-# Step 4 — One S2S authorization per child account per source service
+# Step 4 — One cross-account S2S authorization per child account
 #
-# Keys are "<account_id>/<source_service>". Account IDs are immutable, so
-# renaming an account in the enterprise does not recreate its policies.
+# Grants the "logs" service in each child account "Writer" access to the
+# central COS bucket so each child's IBM Cloud Logs instance can archive
+# its data here after 30 days.
+#
+# Keys are "<account_id>" — one policy per child account (the source service
+# is always "logs" for the archive use-case).
 ##############################################################################
 
-resource "ibm_iam_authorization_policy" "child_to_central_logs" {
-  for_each = local.authorizations
+resource "ibm_iam_authorization_policy" "child_logs_to_central_cos" {
+  for_each = local.child_accounts
 
-  source_service_name    = each.value.source_service
-  source_service_account = each.value.account_id
+  source_service_name    = "logs"
+  source_service_account = each.key
 
-  target_service_name         = var.target_service_name
-  target_resource_instance_id = local.central_logs_instance_guid
+  roles       = ["Writer"]
+  description = "Centralized archive: IBM Cloud Logs in child account ${each.key} may write archived log data to the central COS bucket ${local.cos_bucket_name_resolved}. Managed by Terraform."
 
-  roles = var.authorization_roles
+  resource_attributes {
+    name     = "serviceName"
+    operator = "stringEquals"
+    value    = "cloud-object-storage"
+  }
 
-  description = "Centralized logging: ${each.value.source_service} in child account ${each.value.account_id} may send to the central ${var.target_service_name} instance. Managed by Terraform."
+  resource_attributes {
+    name     = "accountId"
+    operator = "stringEquals"
+    value    = local.central_account_id
+  }
+
+  resource_attributes {
+    name     = "serviceInstance"
+    operator = "stringEquals"
+    value    = regex(".*:(.*):bucket:.*", ibm_cos_bucket.central_archive.crn)[0]
+  }
+
+  resource_attributes {
+    name     = "resourceType"
+    operator = "stringEquals"
+    value    = "bucket"
+  }
+
+  resource_attributes {
+    name     = "resource"
+    operator = "stringEquals"
+    value    = regex("bucket:(.*)", ibm_cos_bucket.central_archive.crn)[0]
+  }
 
   lifecycle {
     precondition {
-      condition     = local.central_logs_instance_guid != ""
-      error_message = "No authorization target resolved. Set central_logs_crn (preferred), central_logs_instance_id, or leave create_central_logs_instance at its default (true)."
+      condition     = local.central_account_id != ""
+      error_message = "central_account_id is unknown — cannot scope the COS resource attributes. Set central_account_id or cos_instance_crn."
     }
 
     precondition {
-      condition     = local.central_account_id == "" || each.value.account_id != local.central_account_id
-      error_message = "Child account ${each.value.account_id} is the central logging account itself. Remove it from child_account_ids — an account does not need an authorization to its own instance."
+      condition     = local.central_account_id == "" || each.key != local.central_account_id
+      error_message = "Child account ${each.key} is the central logging account itself. Remove it from child_account_ids."
     }
   }
 }

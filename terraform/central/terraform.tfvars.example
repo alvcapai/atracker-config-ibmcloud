@@ -1,27 +1,40 @@
 ##############################################################################
 # central/ — example variable values (copy to terraform.tfvars and fill in)
 #
-# Two layouts are supported. Pick ONE of the blocks below.
+# Two layouts are supported. Pick ONE of the blocks below for child account
+# discovery. COS provisioning is always handled by this workspace.
 ##############################################################################
 
-# IBM Cloud region where the central IBM Cloud Logs instance lives (or will
-# be created)
+# IBM Cloud region where the central COS archive bucket will be created
 ibmcloud_region = "us-south"
 
-# Full CRN of an EXISTING central IBM Cloud Logs instance.
-# This single value gives the module both the instance GUID (the authorization
-# target) and the account ID that owns it (auto-excluded from discovery).
-#   ibmcloud resource service-instance <name> --output json | jq -r '.[0].crn'
+##############################################################################
+# COS archive bucket
 #
-# Leave this empty (and leave central_logs_instance_id empty) to have this
-# workspace provision a brand new IBM Cloud Logs instance instead — that is
-# the default (create_central_logs_instance = true). See the
-# "Auto-provisioning" block below to name/place that instance.
-central_logs_crn = "crn:v1:bluemix:public:logs:us-south:a/REPLACE_ACCOUNT_ID:REPLACE_INSTANCE_GUID::"
+# Layout A — let this workspace create both COS instance and bucket:
+#   Leave cos_instance_crn and cos_bucket_name empty (the defaults).
+#   The instance will be named cos_instance_name and the bucket will get a
+#   random suffix.
+#
+# Layout B — reuse an existing COS instance, let this workspace create the bucket:
+#   Set cos_instance_crn to the CRN of the existing instance.
+#
+# Layout C — reuse an existing COS instance AND an existing bucket:
+#   Set both cos_instance_crn and cos_bucket_name.
+##############################################################################
+
+# Name for the COS instance when this workspace creates one (Layout A only).
+# cos_instance_name = "central-logs-archive"
+
+# CRN of an existing COS instance (Layout B and C).
+#   ibmcloud resource service-instance <name> --output json | jq -r '.[0].crn'
+# cos_instance_crn = "crn:v1:bluemix:public:cloud-object-storage:global:a/REPLACE_ACCOUNT_ID:REPLACE_INSTANCE_GUID::"
+
+# Name of the central archive bucket (Layout C, or to override the generated name).
+# cos_bucket_name = "my-central-logs-archive"
 
 ##############################################################################
-# Layout A — the central Logs instance is in the enterprise (management)
-# account, so this workspace can list the child accounts itself.
+# Layout A — this workspace runs in the enterprise (management) account.
 # Nothing else is required: discovery is on by default and the management
 # account plus the central account are excluded automatically.
 ##############################################################################
@@ -33,16 +46,14 @@ central_logs_crn = "crn:v1:bluemix:public:logs:us-south:a/REPLACE_ACCOUNT_ID:REP
 # excluded_account_ids = ["SOME_SANDBOX_ACCOUNT_ID"]
 
 ##############################################################################
-# Layout B — the central Logs instance is in a dedicated logging account.
-# That account has no enterprise access, so the enterprise API cannot be
-# called from here. Supply the list instead; run this from the enterprise
-# account to produce it:
+# Layout B — this workspace runs in a dedicated central account that has no
+# enterprise access. Supply the child account list explicitly; run this from
+# the enterprise account to produce it:
 #
 #   ibmcloud enterprise accounts --output JSON | jq -r '.[].id'
 #
 # Re-run that command and update this list whenever an account joins the
-# enterprise, then re-apply. The plan shows exactly which authorizations are
-# added.
+# enterprise, then re-apply.
 ##############################################################################
 
 # child_account_ids = [
@@ -51,51 +62,15 @@ central_logs_crn = "crn:v1:bluemix:public:logs:us-south:a/REPLACE_ACCOUNT_ID:REP
 # ]
 
 ##############################################################################
-# Auto-provisioning — only used when central_logs_crn and
-# central_logs_instance_id are both left empty
-##############################################################################
-
-# create_central_logs_instance = true
-# central_logs_instance_name   = "central-logging"
-# central_logs_plan            = "standard"
-# central_logs_resource_group_id = ""  # empty = account's Default resource group
-# central_logs_service_endpoints = "public"
-
-# Days data stays searchable in Cloud Logs itself before it is retained only
-# in the COS archive below. Must be one of: 7, 14, 30, 60, 90.
-# logs_retention_days = 30
-
-##############################################################################
-# COS archive — only used when create_central_logs_instance applies (archive
-# storage can only be configured when the Logs instance is created, not
-# retrofitted onto an existing one).
-##############################################################################
-
-# Set to false to create the Logs instance without a COS archive.
-# configure_cos_archive = true
-
-# Full CRN of an EXISTING COS instance to hold the archive bucket. Leave
-# empty to have this workspace provision a new COS instance.
-# cos_instance_crn = "crn:v1:bluemix:public:cloud-object-storage:global:a/REPLACE_ACCOUNT_ID:REPLACE_COS_INSTANCE_GUID::"
-
-# cos_plan               = "standard"
-# cos_resource_group_id  = ""  # empty = same resource group as the Logs instance
-
-# Bucket name must be globally unique across all of IBM Cloud. Leave empty to
-# generate one automatically (random suffix appended).
-# cos_bucket_name          = ""
-# cos_bucket_region        = ""  # empty = ibmcloud_region
-# cos_bucket_storage_class = "standard"
-
-##############################################################################
 # Rarely changed
 ##############################################################################
 
-# Source services in each child account that must reach the central instance.
-# source_services = ["logs-router", "atracker"]
+# Optional: set the account ID explicitly instead of deriving it from the COS CRN.
+# central_account_id = "REPLACE_CENTRAL_ACCOUNT_ID"
 
-# Roles required by both enterprise routing scenarios.
-# authorization_roles = ["Sender"]
+# Storage class for the archive bucket. vault or cold can reduce costs for
+# infrequently accessed archived log data.
+# cos_bucket_storage_class = "standard"
 
 # Account states to include. Set to [] if your enterprise returns a state
 # value that is not "ACTIVE" — check the enterprise_accounts output.

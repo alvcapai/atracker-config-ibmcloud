@@ -15,105 +15,41 @@
 ##############################################################################
 
 variable "ibmcloud_region" {
-  description = "IBM Cloud region for the provider (e.g. us-south). Must be the region where the central IBM Cloud Logs instance is located."
+  description = "IBM Cloud region for the provider (e.g. us-south). Must be the region where the central COS bucket will be created."
   type        = string
   default     = "us-south"
 }
 
 ##############################################################################
-# Authorization target — the central IBM Cloud Logs instance
+# Central account identity
 ##############################################################################
-
-variable "central_logs_crn" {
-  description = "Full CRN of the IBM Cloud Logs instance in the centralized Logging Account, e.g. crn:v1:bluemix:public:logs:us-south:a/ACCOUNTID:INSTANCEGUID::. Preferred input: both the instance GUID and the owning account ID are derived from it. Find it with: ibmcloud resource service-instance NAME --output json | jq -r '.[0].crn'"
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = var.central_logs_crn == "" || length(split(":", var.central_logs_crn)) >= 8
-    error_message = "central_logs_crn must be a full IBM Cloud CRN with at least 8 colon-separated segments, or an empty string."
-  }
-}
-
-variable "central_logs_instance_id" {
-  description = "GUID of the central IBM Cloud Logs instance. Only needed when central_logs_crn is not supplied. Find it with: ibmcloud resource service-instance NAME --output json | jq -r '.[0].guid'"
-  type        = string
-  default     = ""
-}
 
 variable "central_account_id" {
-  description = "Account ID of the centralized Logging Account (the account this workspace runs in). Leave empty to derive it from central_logs_crn. Used to exclude the central account from discovery so it never authorizes itself."
+  description = "Account ID of the central Logging Account (the account this workspace runs in). Leave empty to derive it automatically from cos_instance_crn, or from the default resource group when this workspace creates the COS instance."
   type        = string
   default     = ""
 }
 
 ##############################################################################
-# Auto-provisioning — used only when no existing instance was supplied
+# COS — the central archive bucket
+#
+# Two layouts:
+#   A) Supply cos_instance_crn to reuse an existing COS instance.
+#      Optionally supply cos_bucket_name to reuse an existing bucket.
+#   B) Leave cos_instance_crn empty and this workspace provisions both a
+#      new COS instance and a new bucket automatically.
 ##############################################################################
-
-variable "create_central_logs_instance" {
-  description = "When true (default) and neither central_logs_crn nor central_logs_instance_id is set, provision a new IBM Cloud Logs instance in this account and use it as the authorization target. Set to false to require an existing instance instead of creating one."
-  type        = bool
-  default     = true
-}
-
-variable "central_logs_instance_name" {
-  description = "Name for the IBM Cloud Logs instance created when create_central_logs_instance applies. Ignored when an existing instance is supplied."
-  type        = string
-  default     = "central-logging"
-}
-
-variable "central_logs_plan" {
-  description = "Plan for the IBM Cloud Logs instance created when create_central_logs_instance applies. Ignored when an existing instance is supplied."
-  type        = string
-  default     = "standard"
-}
-
-variable "central_logs_resource_group_id" {
-  description = "Resource group ID for the IBM Cloud Logs instance created when create_central_logs_instance applies. Leave empty to use the account's Default resource group. Ignored when an existing instance is supplied."
-  type        = string
-  default     = ""
-}
-
-variable "central_logs_service_endpoints" {
-  description = "Service endpoints for the IBM Cloud Logs instance created when create_central_logs_instance applies: public, private, or public-and-private. Ignored when an existing instance is supplied."
-  type        = string
-  default     = "public"
-
-  validation {
-    condition     = contains(["public", "private", "public-and-private"], var.central_logs_service_endpoints)
-    error_message = "central_logs_service_endpoints must be one of: public, private, public-and-private."
-  }
-}
-
-variable "logs_retention_days" {
-  description = "Days IBM Cloud Logs keeps ingested data searchable ('hot' / Priority insights) before it is retained only in the archive COS bucket — logs older than this are effectively available only via COS. Only applied when create_central_logs_instance applies. Must be one of the values IBM Cloud Logs accepts: 7, 14, 30, 60, 90."
-  type        = number
-  default     = 30
-
-  validation {
-    condition     = contains([7, 14, 30, 60, 90], var.logs_retention_days)
-    error_message = "logs_retention_days must be one of: 7, 14, 30, 60, 90."
-  }
-}
-
-##############################################################################
-# COS archive — used only when create_central_logs_instance applies. Archive
-# storage can only be configured at Logs-instance creation time, so this has
-# no effect when an existing central_logs_crn / central_logs_instance_id was
-# supplied instead.
-##############################################################################
-
-variable "configure_cos_archive" {
-  description = "Attach a COS bucket as the log archive when this workspace creates the central IBM Cloud Logs instance. Set to false to create the Logs instance without archiving."
-  type        = bool
-  default     = true
-}
 
 variable "cos_instance_crn" {
-  description = "CRN of an existing IBM Cloud Object Storage instance to hold the log archive bucket. Leave empty to have this workspace provision a new COS instance."
+  description = "CRN of an existing IBM Cloud Object Storage instance to hold the central log archive bucket. Leave empty to have this workspace provision a new COS instance. Find it with: ibmcloud resource service-instance NAME --output json | jq -r '.[0].crn'"
   type        = string
   default     = ""
+}
+
+variable "cos_instance_name" {
+  description = "Name for the COS instance created when cos_instance_crn is not supplied. Ignored when an existing COS instance is supplied."
+  type        = string
+  default     = "central-logs-archive"
 }
 
 variable "cos_plan" {
@@ -123,25 +59,25 @@ variable "cos_plan" {
 }
 
 variable "cos_resource_group_id" {
-  description = "Resource group ID for the COS instance created when cos_instance_crn is not supplied. Leave empty to use the same resource group as the central Logs instance. Ignored when an existing COS instance is supplied."
+  description = "Resource group ID for the COS instance created when cos_instance_crn is not supplied. Leave empty to use the account's Default resource group. Ignored when an existing COS instance is supplied."
   type        = string
   default     = ""
 }
 
 variable "cos_bucket_name" {
-  description = "Name of the COS bucket used as the log archive. Bucket names are globally unique across all of IBM Cloud. Leave empty to generate one automatically (a random suffix is appended to guarantee uniqueness)."
+  description = "Name of the central archive COS bucket. Bucket names are globally unique across all of IBM Cloud. Leave empty to generate one automatically (a random suffix is appended to guarantee uniqueness)."
   type        = string
   default     = ""
 }
 
 variable "cos_bucket_region" {
-  description = "Region for the log archive COS bucket (a regional bucket). Leave empty to use ibmcloud_region."
+  description = "Region for the central archive COS bucket (a regional bucket). Leave empty to use ibmcloud_region."
   type        = string
   default     = ""
 }
 
 variable "cos_bucket_storage_class" {
-  description = "Storage class for the log archive COS bucket."
+  description = "Storage class for the central archive COS bucket."
   type        = string
   default     = "standard"
 
@@ -151,31 +87,20 @@ variable "cos_bucket_storage_class" {
   }
 }
 
-variable "target_service_name" {
-  description = "Target service of the authorizations. Keep the default 'logs' for IBM Cloud Logs. Change it only if you reuse this module for another centralized destination, e.g. 'sysdig-monitor' for IBM Cloud Monitoring with metrics-router as the source service."
+variable "cos_archive_days" {
+  description = "Number of days after which objects in the central archive bucket transition to cos_archive_type storage. Set to 0 to disable the lifecycle transition rule. This is a bucket-level rule applied to all archived log objects."
+  type        = number
+  default     = 0
+}
+
+variable "cos_archive_type" {
+  description = "Storage class to transition archive objects into after cos_archive_days. Used only when cos_archive_days > 0."
   type        = string
-  default     = "logs"
-}
-
-variable "authorization_roles" {
-  description = "IAM roles granted by each authorization. The enterprise routing scenarios for both Logs Routing and Activity Tracker require exactly ['Sender']."
-  type        = list(string)
-  default     = ["Sender"]
+  default     = "GLACIER"
 
   validation {
-    condition     = length(var.authorization_roles) > 0
-    error_message = "authorization_roles must contain at least one role."
-  }
-}
-
-variable "source_services" {
-  description = "Source services in each child account that need to send to the central instance. Defaults to the two services required by the centralized logging guide: logs-router (platform logs) and atracker (audit events). Add a service here and every child account gets the extra authorization on the next apply."
-  type        = list(string)
-  default     = ["logs-router", "atracker"]
-
-  validation {
-    condition     = length(var.source_services) > 0
-    error_message = "source_services must contain at least one service name."
+    condition     = contains(["GLACIER", "ACCELERATED"], var.cos_archive_type)
+    error_message = "cos_archive_type must be one of: GLACIER, ACCELERATED."
   }
 }
 
@@ -223,7 +148,7 @@ variable "included_account_states" {
 # child/ workspace generation — feeds the child_workspace_variables and
 # child_workspace_payloads outputs, which carry everything scripts/
 # create-child-workspaces.sh needs to create the per-account child/
-# workspaces (central_logs_crn, logs_router_metadata_region,
+# workspaces (central_cos_bucket_crn, logs_router_metadata_region,
 # atracker_target_region, name_prefix).
 ##############################################################################
 
