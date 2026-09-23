@@ -68,9 +68,19 @@ ibmcloud_region = "us-south"
 # Optional: set the account ID explicitly instead of deriving it from the COS CRN.
 # central_account_id = "REPLACE_CENTRAL_ACCOUNT_ID"
 
-# Storage class for the archive bucket. vault or cold can reduce costs for
-# infrequently accessed archived log data.
+# Storage class for the archive bucket. "smart" lowers cost for rarely read
+# data while keeping it immediately queryable by IBM Cloud Logs.
 # cos_bucket_storage_class = "standard"
+
+# Delete log objects from the archive bucket after this many days.
+# 0 (default) keeps logs forever — set this to your retention requirement.
+# cos_expire_days = 365
+
+# Transition objects to an archive tier after this many days (0 = disabled).
+# WARNING: GLACIER/ACCELERATED objects must be restored before Cloud Logs can
+# query them. Must be lower than cos_expire_days when both are set.
+# cos_archive_days = 0
+# cos_archive_type = "GLACIER"
 
 # Account states to include. Set to [] if your enterprise returns a state
 # value that is not "ACTIVE" — check the enterprise_accounts output.

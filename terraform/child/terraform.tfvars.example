@@ -9,9 +9,9 @@ ibmcloud_region = "us-south"
 # crn:v1:bluemix:public:cloud-object-storage:global:a/<central-account-id>:<instance-guid>:bucket:<bucket-name>
 central_cos_bucket_crn = "REPLACE_WITH_COS_BUCKET_CRN"
 
-# Private S3 endpoint of the central COS bucket (from central/ workspace output: cos_bucket_s3_endpoint_private)
-# Use the public endpoint (cos_bucket_s3_endpoint_public) only if logs_service_endpoints = "public"
-central_cos_bucket_endpoint = "REPLACE_WITH_COS_BUCKET_S3_ENDPOINT_PRIVATE"
+# Direct S3 endpoint of the central COS bucket (from central/ workspace output: cos_bucket_s3_endpoint_direct)
+# IBM Cloud Logs only accepts the direct endpoint, e.g. s3.direct.eu-de.cloud-object-storage.appdomain.cloud
+central_cos_bucket_endpoint = "REPLACE_WITH_COS_BUCKET_S3_ENDPOINT_DIRECT"
 
 # Primary metadata region for Logs Routing V3
 logs_router_metadata_region = "us-south"
@@ -33,8 +33,8 @@ name_prefix = "prod-us-south"
 # Plan for the local IBM Cloud Logs instance.
 # logs_plan = "standard"
 
-# Service endpoints for the local IBM Cloud Logs instance.
-# Must match the endpoint type used for central_cos_bucket_endpoint.
+# Service endpoints for accessing the local IBM Cloud Logs instance.
+# Independent of central_cos_bucket_endpoint (always the direct endpoint).
 # logs_service_endpoints = "private"
 
 # Resource group for the local IBM Cloud Logs instance (leave empty for Default).

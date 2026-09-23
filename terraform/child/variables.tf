@@ -19,14 +19,19 @@ variable "ibmcloud_region" {
 ##############################################################################
 
 variable "central_cos_bucket_crn" {
-  description = "CRN of the central COS bucket where this child account's IBM Cloud Logs instance will archive data after the hot-retention window. Copy this from the central/ workspace's cos_bucket_crn output."
+  description = "CRN of the central COS bucket where this child account's IBM Cloud Logs instance writes its data continuously (from ingestion onward) for long-term storage. Copy this from the central/ workspace's cos_bucket_crn output."
   type        = string
   sensitive   = true
 }
 
 variable "central_cos_bucket_endpoint" {
-  description = "S3 endpoint of the central COS bucket (public or private depending on logs_service_endpoints). Copy this from the central/ workspace's cos_bucket_s3_endpoint_public or cos_bucket_s3_endpoint_private output."
+  description = "Direct S3 endpoint of the central COS bucket (s3.direct.<region>.cloud-object-storage.appdomain.cloud). IBM Cloud Logs only accepts the direct endpoint. Copy this from the central/ workspace's cos_bucket_s3_endpoint_direct output."
   type        = string
+
+  validation {
+    condition     = startswith(var.central_cos_bucket_endpoint, "s3.direct.")
+    error_message = "central_cos_bucket_endpoint must be the COS direct endpoint (s3.direct.<region>.cloud-object-storage.appdomain.cloud); IBM Cloud Logs rejects public and private endpoints."
+  }
 }
 
 ##############################################################################
@@ -46,7 +51,7 @@ variable "logs_resource_group_id" {
 }
 
 variable "logs_service_endpoints" {
-  description = "Service endpoints for the IBM Cloud Logs instance: public, private, or public-and-private. Must match the type of endpoint used in central_cos_bucket_endpoint."
+  description = "Service endpoints for accessing the IBM Cloud Logs instance: public, private, or public-and-private. Independent of central_cos_bucket_endpoint, which is always the COS direct endpoint."
   type        = string
   default     = "private"
 
@@ -57,7 +62,7 @@ variable "logs_service_endpoints" {
 }
 
 variable "logs_retention_days" {
-  description = "Days this child account's IBM Cloud Logs instance keeps ingested data searchable ('hot') before archiving it to the central COS bucket. Must be one of the values IBM Cloud Logs accepts: 7, 14, 30, 60, 90."
+  description = "Days this child account's IBM Cloud Logs instance keeps ingested data searchable ('hot'); after that the hot copy is deleted and only the central COS copy remains. Must be one of the values IBM Cloud Logs accepts: 7, 14, 30, 60, 90."
   type        = number
   default     = 30
 

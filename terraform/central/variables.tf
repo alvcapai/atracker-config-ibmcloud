@@ -88,13 +88,29 @@ variable "cos_bucket_storage_class" {
 }
 
 variable "cos_archive_days" {
-  description = "Number of days after which objects in the central archive bucket transition to cos_archive_type storage. Set to 0 to disable the lifecycle transition rule. This is a bucket-level rule applied to all archived log objects."
+  description = "Number of days after which objects in the central archive bucket transition to cos_archive_type storage. Set to 0 (default) to disable. WARNING: GLACIER objects must be restored before they can be read, so IBM Cloud Logs cannot query data older than this while the rule is on."
   type        = number
   default     = 0
+
+  validation {
+    condition     = var.cos_archive_days >= 0
+    error_message = "cos_archive_days must be 0 (disabled) or a positive number of days."
+  }
+}
+
+variable "cos_expire_days" {
+  description = "Number of days after which log objects in the central archive bucket are permanently deleted. Set to 0 (default) to keep logs indefinitely. Should be at least the child Logs instances' retention period; set it to your compliance retention requirement (e.g. 365 or 2555)."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.cos_expire_days >= 0
+    error_message = "cos_expire_days must be 0 (disabled) or a positive number of days."
+  }
 }
 
 variable "cos_archive_type" {
-  description = "Storage class to transition archive objects into after cos_archive_days. Used only when cos_archive_days > 0."
+  description = "Storage class to transition archive objects into after cos_archive_days. Used only when cos_archive_days > 0. GLACIER objects are not queryable by IBM Cloud Logs until restored; ACCELERATED restores faster but still requires a restore."
   type        = string
   default     = "GLACIER"
 

@@ -4,13 +4,22 @@
 # Run this workspace FIRST. It provisions (or reuses) a COS instance and
 # bucket in the central account, then grants each child account's IBM Cloud
 # Logs service "Writer" access to that bucket so each child's Logs instance
-# can archive its data here after 30 days.
+# can write its data here. Cloud Logs writes to the bucket continuously as
+# logs are ingested — not after the hot-retention window.
 #
 # Architecture
 #   - Central account: COS instance + bucket only. No Cloud Logs here.
 #   - Child accounts: local Cloud Logs instance (30-day hot retention) whose
-#     archive is pointed at this bucket. logs-router and atracker route into
+#     data bucket is this bucket. logs-router and atracker route into
 #     the local Cloud Logs instance, not into the central account.
+#
+# Data lifecycle
+#   - On ingestion, each child Logs instance keeps a searchable hot copy for
+#     its retention_period AND writes the data to this bucket (continuously).
+#   - After retention_period the hot copy is deleted; this bucket is then the
+#     only copy, still queryable from the child's Cloud Logs UI.
+#   - How long this bucket keeps data is governed only by the bucket's own
+#     lifecycle rules (var.cos_expire_days / var.cos_archive_days).
 #
 # What it does
 #   1. Creates (or reuses) a COS instance and bucket in this account.
@@ -145,9 +154,10 @@ resource "ibm_cos_bucket" "central_archive" {
   region_location      = local.cos_bucket_region_resolved
   storage_class        = var.cos_bucket_storage_class
 
-  # Lifecycle rule: transition objects to a cheaper tier after 30 days.
-  # The child Cloud Logs instance archives data here; older objects are
-  # not frequently accessed and can move to vault/cold storage.
+  # Optional transition to an archive tier. WARNING: objects in GLACIER must be
+  # restored before they can be read, so Cloud Logs cannot query data older
+  # than cos_archive_days while this rule is on. Prefer storage_class = "smart"
+  # for cheaper long-term storage that stays queryable.
   dynamic "archive_rule" {
     for_each = var.cos_archive_days > 0 ? [1] : []
     content {
@@ -155,6 +165,25 @@ resource "ibm_cos_bucket" "central_archive" {
       enable  = true
       days    = var.cos_archive_days
       type    = var.cos_archive_type
+    }
+  }
+
+  # Optional expiration: permanently deletes log objects older than
+  # cos_expire_days. This is the ONLY thing that bounds how long logs are kept
+  # in the central archive — with it disabled, logs are kept indefinitely.
+  dynamic "expire_rule" {
+    for_each = var.cos_expire_days > 0 ? [1] : []
+    content {
+      rule_id = "logs-expire"
+      enable  = true
+      days    = var.cos_expire_days
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.cos_expire_days == 0 || var.cos_archive_days == 0 || var.cos_expire_days > var.cos_archive_days
+      error_message = "cos_expire_days must be greater than cos_archive_days when both are set."
     }
   }
 }
@@ -277,8 +306,8 @@ check "cos_bucket_ready" {
 # Step 4 — One cross-account S2S authorization per child account
 #
 # Grants the "logs" service in each child account "Writer" access to the
-# central COS bucket so each child's IBM Cloud Logs instance can archive
-# its data here after 30 days.
+# central COS bucket so each child's IBM Cloud Logs instance can write its
+# data here (continuously, from ingestion onward).
 #
 # Keys are "<account_id>" — one policy per child account (the source service
 # is always "logs" for the archive use-case).

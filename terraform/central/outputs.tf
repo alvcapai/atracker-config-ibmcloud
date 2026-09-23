@@ -102,8 +102,13 @@ output "cos_bucket_s3_endpoint_public" {
 }
 
 output "cos_bucket_s3_endpoint_private" {
-  description = "Private S3 endpoint for the central archive bucket. Used by child Cloud Logs instances configured with private service endpoints."
+  description = "Private S3 endpoint for the central archive bucket. Not accepted by IBM Cloud Logs as a data bucket endpoint — use cos_bucket_s3_endpoint_direct for that."
   value       = ibm_cos_bucket.central_archive.s3_endpoint_private
+}
+
+output "cos_bucket_s3_endpoint_direct" {
+  description = "Direct S3 endpoint for the central archive bucket. IBM Cloud Logs requires the direct endpoint for its data bucket; copy this into central_cos_bucket_endpoint for every child/ workspace."
+  value       = ibm_cos_bucket.central_archive.s3_endpoint_direct
 }
 
 output "child_workspace_variables" {
@@ -114,7 +119,7 @@ output "child_workspace_variables" {
       name_prefix                 = local.child_name_prefixes[id]
       ibmcloud_region             = local.child_regions[id]
       central_cos_bucket_crn      = ibm_cos_bucket.central_archive.crn
-      central_cos_bucket_endpoint = ibm_cos_bucket.central_archive.s3_endpoint_private
+      central_cos_bucket_endpoint = ibm_cos_bucket.central_archive.s3_endpoint_direct
       logs_router_metadata_region = local.child_regions[id]
       atracker_target_region      = local.child_regions[id]
     }
@@ -129,7 +134,7 @@ output "child_workspace_payloads" {
       name        = "${var.child_workspace_name_prefix}${local.child_name_prefixes[id]}"
       type        = [var.child_workspace_terraform_version]
       location    = local.child_regions[id]
-      description = "Deploys a local Cloud Logs instance + Logs Routing V3 and Activity Tracker enterprise-managed routes for child account ${id} (${name}). Archives logs to the central COS bucket after 30 days."
+      description = "Deploys a local Cloud Logs instance + Logs Routing V3 and Activity Tracker enterprise-managed routes for child account ${id} (${name}). Keeps logs searchable locally for 30 days and writes them continuously to the central COS bucket."
       template_repo = {
         url    = var.child_workspace_repo_url
         branch = var.child_workspace_repo_branch
@@ -140,7 +145,7 @@ output "child_workspace_payloads" {
         variablestore = [
           { name = "ibmcloud_region", value = local.child_regions[id] },
           { name = "central_cos_bucket_crn", value = ibm_cos_bucket.central_archive.crn, secure = true },
-          { name = "central_cos_bucket_endpoint", value = ibm_cos_bucket.central_archive.s3_endpoint_private },
+          { name = "central_cos_bucket_endpoint", value = ibm_cos_bucket.central_archive.s3_endpoint_direct },
           { name = "logs_router_metadata_region", value = local.child_regions[id] },
           { name = "atracker_target_region", value = local.child_regions[id] },
           { name = "name_prefix", value = local.child_name_prefixes[id] },

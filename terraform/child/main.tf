@@ -10,8 +10,10 @@
 #   - This workspace creates a local IBM Cloud Logs instance in the child
 #     account. Logs are kept searchable ("hot") for var.logs_retention_days
 #     (default 30 days).
-#   - After the hot-retention window, the Logs instance archives data to the
-#     central COS bucket provisioned by the central/ workspace.
+#   - As logs are ingested, the Logs instance also writes them continuously
+#     to the central COS bucket (its "data bucket"). After the hot-retention
+#     window the hot copy is deleted and the COS copy remains, still
+#     queryable from this instance. COS retention is set in central/.
 #   - logs-router and atracker both route into this local Logs instance.
 #     Nothing routes directly to the central account any more.
 #
@@ -52,8 +54,9 @@ provider "ibm" {
 # Section 1 — Local IBM Cloud Logs instance
 #
 # This instance is the destination for both Logs Routing V3 and Activity
-# Tracker in this child account. It archives ingested data to the central COS
-# bucket after var.logs_retention_days days.
+# Tracker in this child account. It keeps ingested data searchable for
+# var.logs_retention_days days and, from ingestion onward, writes it to the
+# central COS bucket, which holds it long term.
 #
 # Pre-requisite: the central/ workspace must have already applied the
 # cross-account IAM authorization (child "logs" service → central COS bucket
@@ -91,9 +94,11 @@ resource "ibm_resource_instance" "logs" {
   plan              = var.logs_plan
   location          = var.ibmcloud_region
   resource_group_id = local.logs_resource_group_id_resolved
+  service_endpoints = var.logs_service_endpoints
 
+  # logs_bucket_endpoint must be the COS *direct* endpoint (s3.direct.<region>...),
+  # regardless of service_endpoints — the broker rejects public/private ones.
   parameters = {
-    service-endpoints    = var.logs_service_endpoints
     retention_period     = var.logs_retention_days
     logs_bucket_crn      = var.central_cos_bucket_crn
     logs_bucket_endpoint = var.central_cos_bucket_endpoint
