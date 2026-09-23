@@ -1,0 +1,207 @@
+<!-- Source for log-flow-architecture.png. Re-render with:
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --hide-scrollbars \
+    --window-size=1600,1080 --force-device-scale-factor=2 \
+    --screenshot=docs/log-flow-architecture.png "file://$PWD/docs/log-flow-architecture.html"
+-->
+<style>
+  html, body { margin: 0; background: #ffffff; }
+  svg { display: block; font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  .title { font-size: 26px; font-weight: 700; fill: #161616; }
+  .sub { font-size: 15px; fill: #525252; }
+  .panel-label { font-size: 17px; font-weight: 700; }
+  .panel-tag { font-size: 12px; fill: #6f6f6f; font-family: Menlo, monospace; }
+  .box-title { font-size: 14px; font-weight: 600; fill: #161616; }
+  .box-text { font-size: 12px; fill: #393939; }
+  .mono { font-family: Menlo, monospace; font-size: 11.5px; fill: #393939; }
+  .small { font-size: 11.5px; fill: #525252; }
+  .callout-title { fill: #0e6027; }
+  .warn { font-size: 11.5px; fill: #8a3800; }
+  .lane { font-size: 13px; font-weight: 600; fill: #161616; }
+  .tick { font-size: 12px; fill: #393939; }
+</style>
+
+<svg width="1600" height="1080" viewBox="0 0 1600 1080" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#393939"/>
+    </marker>
+    <marker id="arr-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#198038"/>
+    </marker>
+    <marker id="arr-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0f62fe"/>
+    </marker>
+    <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="8" height="8" fill="#f4f4f4"/>
+      <line x1="0" y1="0" x2="0" y2="8" stroke="#c6c6c6" stroke-width="3"/>
+    </pattern>
+  </defs>
+
+  <rect width="1600" height="1080" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="40" y="50" class="title">Log flow: child Cloud Logs instances → central COS archive</text>
+  <text x="40" y="78" class="sub">Each child account searches its own logs for 30 days; every log is also written continuously to one central COS bucket for long-term storage.</text>
+
+  <!-- ===================== Child account A ===================== -->
+  <rect x="40" y="120" width="980" height="300" rx="10" fill="#edf5ff" stroke="#78a9ff" stroke-width="1.5"/>
+  <text x="60" y="150" class="panel-label" fill="#0043ce">Child account A</text>
+  <text x="200" y="150" class="panel-tag">terraform/child workspace</text>
+
+  <rect x="70" y="190" width="230" height="66" rx="6" fill="#fff" stroke="#8d8d8d"/>
+  <text x="185" y="218" text-anchor="middle" class="box-title">IBM Cloud services</text>
+  <text x="185" y="238" text-anchor="middle" class="box-text">platform logs</text>
+
+  <rect x="70" y="300" width="230" height="66" rx="6" fill="#fff" stroke="#8d8d8d"/>
+  <text x="185" y="328" text-anchor="middle" class="box-title">Account activity</text>
+  <text x="185" y="348" text-anchor="middle" class="box-text">audit events</text>
+
+  <rect x="350" y="190" width="270" height="66" rx="6" fill="#fff" stroke="#8d8d8d"/>
+  <text x="485" y="218" text-anchor="middle" class="box-title">Logs Routing V3</text>
+  <text x="485" y="238" text-anchor="middle" class="mono">&lt;prefix&gt;-platform-logs-route</text>
+
+  <rect x="350" y="300" width="270" height="66" rx="6" fill="#fff" stroke="#8d8d8d"/>
+  <text x="485" y="328" text-anchor="middle" class="box-title">Activity Tracker Event Routing</text>
+  <text x="485" y="348" text-anchor="middle" class="mono">&lt;prefix&gt;-audit-route</text>
+
+  <line x1="300" y1="223" x2="348" y2="223" stroke="#393939" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="300" y1="333" x2="348" y2="333" stroke="#393939" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="620" y1="223" x2="678" y2="223" stroke="#393939" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="620" y1="333" x2="678" y2="333" stroke="#393939" stroke-width="1.6" marker-end="url(#arr)"/>
+
+  <rect x="680" y="175" width="310" height="220" rx="8" fill="#fff" stroke="#0f62fe" stroke-width="2"/>
+  <text x="835" y="203" text-anchor="middle" class="box-title">IBM Cloud Logs instance</text>
+  <text x="835" y="222" text-anchor="middle" class="mono">&lt;prefix&gt;-logs</text>
+  <rect x="700" y="238" width="270" height="72" rx="6" fill="#d0e2ff" stroke="#0f62fe"/>
+  <text x="835" y="264" text-anchor="middle" class="box-title">Hot storage (searchable)</text>
+  <text x="835" y="286" text-anchor="middle" class="mono">retention_period = 30 days</text>
+  <text x="835" y="340" text-anchor="middle" class="box-text">Search · Dashboards · Alerts</text>
+  <text x="835" y="362" text-anchor="middle" class="small">Queries on logs &gt; 30 days read back from COS</text>
+
+  <!-- ===================== Child account B ===================== -->
+  <rect x="40" y="450" width="980" height="300" rx="10" fill="#edf5ff" stroke="#78a9ff" stroke-width="1.5"/>
+  <text x="60" y="480" class="panel-label" fill="#0043ce">Child account B</text>
+  <text x="200" y="480" class="panel-tag">terraform/child workspace</text>
+
+  <rect x="70" y="520" width="230" height="66" rx="6" fill="#fff" stroke="#8d8d8d"/>
+  <text x="185" y="548" text-anchor="middle" class="box-title">IBM Cloud services</text>
+  <text x="185" y="568" text-anchor="middle" class="box-text">platform logs</text>
+
+  <rect x="70" y="630" width="230" height="66" rx="6" fill="#fff" stroke="#8d8d8d"/>
+  <text x="185" y="658" text-anchor="middle" class="box-title">Account activity</text>
+  <text x="185" y="678" text-anchor="middle" class="box-text">audit events</text>
+
+  <rect x="350" y="520" width="270" height="66" rx="6" fill="#fff" stroke="#8d8d8d"/>
+  <text x="485" y="548" text-anchor="middle" class="box-title">Logs Routing V3</text>
+  <text x="485" y="568" text-anchor="middle" class="mono">&lt;prefix&gt;-platform-logs-route</text>
+
+  <rect x="350" y="630" width="270" height="66" rx="6" fill="#fff" stroke="#8d8d8d"/>
+  <text x="485" y="658" text-anchor="middle" class="box-title">Activity Tracker Event Routing</text>
+  <text x="485" y="678" text-anchor="middle" class="mono">&lt;prefix&gt;-audit-route</text>
+
+  <line x1="300" y1="553" x2="348" y2="553" stroke="#393939" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="300" y1="663" x2="348" y2="663" stroke="#393939" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="620" y1="553" x2="678" y2="553" stroke="#393939" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="620" y1="663" x2="678" y2="663" stroke="#393939" stroke-width="1.6" marker-end="url(#arr)"/>
+
+  <rect x="680" y="505" width="310" height="220" rx="8" fill="#fff" stroke="#0f62fe" stroke-width="2"/>
+  <text x="835" y="533" text-anchor="middle" class="box-title">IBM Cloud Logs instance</text>
+  <text x="835" y="552" text-anchor="middle" class="mono">&lt;prefix&gt;-logs</text>
+  <rect x="700" y="568" width="270" height="72" rx="6" fill="#d0e2ff" stroke="#0f62fe"/>
+  <text x="835" y="594" text-anchor="middle" class="box-title">Hot storage (searchable)</text>
+  <text x="835" y="616" text-anchor="middle" class="mono">retention_period = 30 days</text>
+  <text x="835" y="670" text-anchor="middle" class="box-text">Search · Dashboards · Alerts</text>
+  <text x="835" y="692" text-anchor="middle" class="small">Queries on logs &gt; 30 days read back from COS</text>
+
+  <text x="60" y="776" class="small">… one child/ Schematics workspace (and one Cloud Logs instance) per enterprise account, all writing to the same central bucket</text>
+
+  <!-- ===================== Central account ===================== -->
+  <rect x="1150" y="120" width="410" height="630" rx="10" fill="#defbe6" stroke="#42be65" stroke-width="1.5"/>
+  <text x="1170" y="150" class="panel-label" fill="#0e6027">Central account</text>
+  <text x="1310" y="150" class="panel-tag">terraform/central</text>
+
+  <rect x="1170" y="170" width="370" height="395" rx="8" fill="#fff" stroke="#8d8d8d"/>
+  <text x="1355" y="196" text-anchor="middle" class="box-title">Cloud Object Storage instance</text>
+
+  <rect x="1190" y="212" width="330" height="338" rx="8" fill="#f6fff8" stroke="#198038" stroke-width="2"/>
+  <text x="1355" y="240" text-anchor="middle" class="box-title">Central archive bucket</text>
+  <text x="1355" y="259" text-anchor="middle" class="mono">regional · same region as children</text>
+
+  <!-- folder rows -->
+  <g>
+    <rect x="1210" y="285" width="290" height="46" rx="5" fill="#fff" stroke="#a7f0ba"/>
+    <text x="1224" y="304" class="box-text" font-weight="600">Instance A data</text>
+    <text x="1224" y="321" class="mono">…/date/hour/*.parquet</text>
+
+    <rect x="1210" y="341" width="290" height="46" rx="5" fill="#fff" stroke="#a7f0ba"/>
+    <text x="1224" y="360" class="box-text" font-weight="600">Instance B data</text>
+    <text x="1224" y="377" class="mono">…/date/hour/*.parquet</text>
+
+    <rect x="1210" y="397" width="290" height="46" rx="5" fill="#fff" stroke="#a7f0ba"/>
+    <text x="1224" y="416" class="box-text" font-weight="600">Instance N data</text>
+    <text x="1224" y="433" class="mono">…/date/hour/*.parquet</text>
+  </g>
+  <text x="1224" y="470" class="small">Compressed Parquet, Cloud Logs internal layout</text>
+  <text x="1224" y="490" class="small">(not a format for third-party tools)</text>
+  <text x="1224" y="520" class="mono">storage_class: standard | smart</text>
+
+  <rect x="1170" y="585" width="370" height="145" rx="8" fill="#fff" stroke="#8d8d8d"/>
+  <text x="1190" y="611" class="box-title">Bucket lifecycle rules</text>
+  <text x="1190" y="636" class="box-text" font-weight="600">expire_rule: delete after cos_expire_days</text>
+  <text x="1190" y="655" class="small">0 (default) = keep logs forever</text>
+  <text x="1190" y="684" class="box-text" font-weight="600">archive_rule (optional): → GLACIER</text>
+  <text x="1190" y="703" class="warn">Glacier objects must be restored before</text>
+  <text x="1190" y="719" class="warn">Cloud Logs can query them</text>
+
+  <!-- ===================== Cross-account arrows ===================== -->
+  <!-- A: continuous write + read-back -->
+  <line x1="990" y1="262" x2="1188" y2="305" stroke="#198038" stroke-width="2.4" marker-end="url(#arr-green)"/>
+  <line x1="1188" y1="322" x2="992" y2="292" stroke="#0f62fe" stroke-width="1.5" stroke-dasharray="6 5" marker-end="url(#arr-blue)"/>
+  <!-- B: continuous write + read-back -->
+  <line x1="990" y1="592" x2="1188" y2="364" stroke="#198038" stroke-width="2.4" marker-end="url(#arr-green)"/>
+  <line x1="1188" y1="380" x2="992" y2="622" stroke="#0f62fe" stroke-width="1.5" stroke-dasharray="6 5" marker-end="url(#arr-blue)"/>
+
+  <!-- arrow callout in the gap between the child panels -->
+  <rect x="1026" y="150" width="118" height="92" rx="6" fill="#fff" stroke="#198038"/>
+  <text x="1085" y="169" text-anchor="middle" class="small callout-title" font-weight="700">continuous write</text>
+  <text x="1085" y="186" text-anchor="middle" class="small">from ingestion</text>
+  <text x="1085" y="203" text-anchor="middle" class="small">s3.direct endpoint</text>
+  <text x="1085" y="220" text-anchor="middle" class="small">IAM S2S:</text>
+  <text x="1085" y="235" text-anchor="middle" class="small">logs → COS Writer</text>
+
+  <!-- ===================== Timeline ===================== -->
+  <line x1="40" y1="800" x2="1560" y2="800" stroke="#e0e0e0"/>
+  <text x="40" y="830" class="panel-label" fill="#161616">Lifecycle of one log event</text>
+
+  <text x="60" y="878" class="lane">Child Logs instance (hot)</text>
+  <rect x="280" y="860" width="380" height="28" rx="4" fill="#0f62fe"/>
+  <text x="470" y="879" text-anchor="middle" class="box-text" style="fill:#ffffff" font-weight="600">searchable · fast queries</text>
+  <rect x="660" y="860" width="840" height="28" rx="4" fill="url(#hatch)"/>
+  <text x="1080" y="879" text-anchor="middle" class="small">removed from hot storage</text>
+
+  <text x="60" y="928" class="lane">Central COS bucket</text>
+  <rect x="280" y="910" width="1020" height="28" rx="4" fill="#198038"/>
+  <text x="790" y="929" text-anchor="middle" class="box-text" style="fill:#ffffff" font-weight="600">stored within minutes of ingestion · still queryable from the child's Cloud Logs UI</text>
+  <rect x="1300" y="910" width="200" height="28" rx="4" fill="#ffffff" stroke="#198038" stroke-dasharray="5 4"/>
+  <text x="1400" y="929" text-anchor="middle" class="small">kept forever if 0</text>
+
+  <!-- axis -->
+  <line x1="280" y1="962" x2="1510" y2="962" stroke="#393939" stroke-width="1.4" marker-end="url(#arr)"/>
+  <line x1="280" y1="955" x2="280" y2="969" stroke="#393939" stroke-width="1.6"/>
+  <line x1="660" y1="955" x2="660" y2="969" stroke="#393939" stroke-width="1.6"/>
+  <line x1="1300" y1="955" x2="1300" y2="969" stroke="#393939" stroke-width="1.6"/>
+  <text x="280" y="988" text-anchor="middle" class="tick" font-weight="600">Day 0</text>
+  <text x="280" y="1005" text-anchor="middle" class="small">ingested</text>
+  <text x="660" y="988" text-anchor="middle" class="tick" font-weight="600">Day 30</text>
+  <text x="660" y="1005" text-anchor="middle" class="small">hot copy expires</text>
+  <text x="1300" y="988" text-anchor="middle" class="tick" font-weight="600">cos_expire_days</text>
+  <text x="1300" y="1005" text-anchor="middle" class="small">object deleted from COS</text>
+
+  <!-- legend -->
+  <line x1="60" y1="1045" x2="100" y2="1045" stroke="#198038" stroke-width="2.4" marker-end="url(#arr-green)"/>
+  <text x="110" y="1049" class="small">Write to archive (continuous)</text>
+  <line x1="320" y1="1045" x2="360" y2="1045" stroke="#0f62fe" stroke-width="1.5" stroke-dasharray="6 5" marker-end="url(#arr-blue)"/>
+  <text x="370" y="1049" class="small">Read-back when querying logs older than the hot retention</text>
+  <line x1="780" y1="1045" x2="820" y2="1045" stroke="#393939" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="830" y="1049" class="small">Routing inside the child account</text>
+</svg>
